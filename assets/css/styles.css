@@ -149,3 +149,92 @@ h3 { margin-bottom: 6px; color: var(--navy); font-size: 15px; }
   .action-tile { min-height: 95px; padding: 13px; }
   .footer { padding-bottom: 18px; font-size: 10px; }
 }
+
+.diagnostic-box { display: grid; gap: 7px; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: #f7fafb; color: var(--ink); font-size: 12px; }
+.diagnostic-box code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; color: #7d3037; font-size: 12px; }
+
+
+/* Ajustes de leitura e adaptação para smartphones */
+html { -webkit-text-size-adjust: 100%; }
+body { overflow-x: hidden; }
+#app-root, .panel, .form-panel, .login-card { min-width: 0; }
+.field input, .field select, .field textarea { max-width: 100%; }
+.field small { display: block; }
+
+@media (max-width: 560px) {
+  .topbar {
+    min-height: 62px;
+    padding: 8px 11px;
+    gap: 8px;
+  }
+  .brand { gap: 8px; }
+  .brand-mark { width: 36px; height: 36px; border-radius: 10px; }
+  .brand-copy strong { font-size: 13px; }
+  .brand-copy small { font-size: 9px; }
+  .topbar-actions { gap: 4px; flex-shrink: 0; }
+  .topbar-actions .button-small { min-height: 33px; padding: 6px 9px; }
+
+  .main-content {
+    width: calc(100% - 20px);
+    margin: 14px auto 24px;
+  }
+  .dashboard-head { gap: 9px; margin-bottom: 14px; }
+  .dashboard-head h1 { font-size: 24px; }
+  .dashboard-head > div:last-child { text-align: left; }
+  .dashboard-head > div:last-child p { text-align: left !important; }
+
+  .panel { padding: 14px; border-radius: 14px; }
+  .panel-head { gap: 8px; margin-bottom: 12px; }
+  .panel-head > div { min-width: 0; }
+  .form-panel { padding: 14px; }
+  .form-stack { gap: 12px; }
+  .inline-fields { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .field { min-width: 0; gap: 5px; }
+  .field label { font-size: 13px; line-height: 1.35; }
+  .field input, .field select, .field textarea {
+    min-height: 48px;
+    padding: 11px 12px;
+    font-size: 16px;
+  }
+  .field small { font-size: 11px; line-height: 1.4; }
+
+  .form-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .form-actions .button { width: 100%; min-height: 45px; }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .metric { padding: 11px; }
+  .metric strong { font-size: clamp(16px, 5vw, 20px); }
+  .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .action-tile { min-width: 0; min-height: 88px; padding: 11px; gap: 7px; }
+  .action-tile strong { font-size: 12px; line-height: 1.3; }
+  .action-tile small { font-size: 10px; }
+  .status-badge { max-width: 100%; font-size: 11px; }
+  .notice { padding: 11px 12px; font-size: 12px; }
+  .table-wrap { max-width: 100%; }
+  .movements { min-width: 540px; }
+  .login-wrap { min-height: auto; padding: 8px 0; }
+  .login-card { padding: 21px 17px; border-radius: 18px; }
+  .role-switch { margin: 18px 0 16px; }
+  .footer { padding: 14px 12px calc(18px + env(safe-area-inset-bottom)); line-height: 1.5; }
+  .toast-region {
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    width: calc(100vw - 20px);
+  }
+}
+
+@media (max-width: 380px) {
+  .topbar { padding-right: 8px; padding-left: 8px; }
+  .brand { gap: 6px; }
+  .brand-mark { width: 33px; height: 33px; font-size: 12px; }
+  .brand-copy strong { font-size: 12px; }
+  .brand-copy small { display: none; }
+  .connection-pill { padding: 4px 2px; }
+  .topbar-actions .button-small { padding: 6px 7px; font-size: 10px; }
+  .main-content { width: calc(100% - 16px); }
+  .panel { padding: 12px; }
+  .form-panel { padding: 12px; }
+  .metric { padding: 9px; }
+  .metric span { font-size: 9px; }
+  .metric strong { font-size: 16px; }
+  .action-tile { padding: 9px; }
+}
