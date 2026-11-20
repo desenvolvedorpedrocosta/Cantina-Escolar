@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cantina-da-escola-shell-v6';
+const CACHE_NAME = 'cantina-da-escola-shell-v7';
 const SHELL_FILES = [
   './',
   './index.html',
