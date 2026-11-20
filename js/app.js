@@ -5,7 +5,7 @@ import { formatarMoeda, formatarDataHora, formatarTipo } from './reports.js';
 import { sincronizarFila, quantidadePendente, detalhesFila } from './offline.js';
 import { obterSessao, prefereLembrarLogin } from './storage.js';
 import { urlConfigurada } from './api.js';
-import { instalarAplicativo, podeMostrarAjudaIOS, tipoInstalacao, estaInstalado } from './install.js';
+import { instalarAplicativo, podeMostrarAjudaIOS, podeInstalar, ehChromium, tipoInstalacao, estaInstalado } from './install.js';
 import { criarRelatorioPDF } from './pdf-report.js';
 
 const root = document.getElementById('app-root');
@@ -128,13 +128,17 @@ function dataHojePt() {
 
 
 function atualizarBotaoInstalacao() {
-  const tipo = tipoInstalacao();
   if (!installButton) return;
-  if (tipo === 'instalado' || tipo === 'indisponivel' || estaInstalado()) {
+  if (estaInstalado() || tipoInstalacao() === 'instalado') {
     installButton.classList.add('hidden');
     return;
   }
-  installButton.textContent = tipo === 'ios' ? 'Como instalar' : 'Instalar app';
+
+  // O botão permanece disponível mesmo antes do beforeinstallprompt.
+  // Quando o navegador entrega o prompt nativo, o texto muda para Instalar app.
+  installButton.textContent = podeInstalar() ? 'Instalar app' : 'Como instalar';
+  installButton.setAttribute('aria-haspopup', 'dialog');
+  installButton.setAttribute('aria-controls', 'install-help-overlay');
   installButton.classList.remove('hidden');
 }
 
@@ -229,28 +233,89 @@ async function mostrarModalCompartilharApp() {
   });
 }
 
-function mostrarAjudaInstalacao() {
-  const safari = ehSafariIOS();
-  abrirDialogo(`
-    <div class="dialog-body">
-      <div class="dialog-head"><div><p class="eyebrow">Instalar no iPhone ou iPad</p><h2 id="app-dialog-title">Adicionar à Tela de Início</h2><p class="subtle">No iPhone e iPad, a instalação é feita pelo Safari.</p></div><button class="dialog-close" type="button" data-dialog-close aria-label="Fechar">×</button></div>
-      ${!safari ? '<div class="notice warning"><div><strong>Abra primeiro no Safari</strong>Copie o link do aplicativo e abra-o no navegador Safari para continuar.</div></div>' : ''}
-      <ol class="install-steps">
-        <li><span class="install-step-number">1</span><span>Abra o link da Cantina da Escola no <strong>Safari</strong>.</span></li>
-        <li><span class="install-step-number">2</span><span>Toque no botão <strong>Compartilhar</strong> <span class="install-symbol">□↑</span> na barra do Safari.</span></li>
-        <li><span class="install-step-number">3</span><span>Role as opções e toque em <strong>Adicionar à Tela de Início</strong>. Depois confirme em <strong>Adicionar</strong>.</span></li>
+function fecharAjudaInstalacao() {
+  const overlay = document.getElementById('install-help-overlay');
+  if (overlay) overlay.remove();
+  document.body.classList.remove('install-help-open');
+  if (fecharAjudaInstalacao._keydown) {
+    document.removeEventListener('keydown', fecharAjudaInstalacao._keydown, true);
+    fecharAjudaInstalacao._keydown = null;
+  }
+}
+
+function abrirPainelAjudaInstalacao({ titulo, descricao, passos, nota = '' }) {
+  fecharAjudaInstalacao();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'install-help-overlay';
+  overlay.className = 'install-help-overlay';
+  overlay.innerHTML = `
+    <section class="install-help-card" role="dialog" aria-modal="true" aria-labelledby="install-help-title" tabindex="-1">
+      <div class="install-help-head">
+        <div>
+          <p class="eyebrow">Cantina da Escola</p>
+          <h2 id="install-help-title">${escapeHtml(titulo)}</h2>
+        </div>
+        <button class="install-help-close" type="button" data-install-help-close aria-label="Fechar instruções">×</button>
+      </div>
+      <p class="install-help-description">${escapeHtml(descricao)}</p>
+      <ol class="install-help-steps">
+        ${passos.map((passo, index) => `<li><span class="install-help-number">${index + 1}</span><span>${passo}</span></li>`).join('')}
       </ol>
-      <button type="button" class="button button-primary button-block" data-dialog-close>Entendi</button>
-    </div>`);
+      ${nota ? `<p class="install-help-note">${escapeHtml(nota)}</p>` : ''}
+      <button type="button" class="button button-primary button-block" data-install-help-close>Entendi</button>
+    </section>`;
+
+  document.body.appendChild(overlay);
+  document.body.classList.add('install-help-open');
+
+  overlay.addEventListener('click', (event) => {
+    // Fechamento pelo botão ou toque na área escura, sem cancelar o clique.
+    if (event.target === overlay || event.target.closest('[data-install-help-close]')) {
+      fecharAjudaInstalacao();
+    }
+  });
+
+  fecharAjudaInstalacao._keydown = (event) => {
+    if (event.key === 'Escape') fecharAjudaInstalacao();
+  };
+  document.addEventListener('keydown', fecharAjudaInstalacao._keydown, true);
+
+  requestAnimationFrame(() => overlay.querySelector('.install-help-close')?.focus());
+}
+
+function mostrarAjudaInstalacao() {
+  abrirPainelAjudaInstalacao({
+    titulo: 'Adicionar à Tela de Início',
+    descricao: 'Para instalar no iPhone: 1. Abra este link no Safari → 2. Toque no ícone de Compartilhar (quadrado com seta pra cima) → 3. Role e toque em Adicionar à Tela de Início.',
+    passos: [
+      'Abra este link no <strong>Safari</strong>. Se estiver em outro navegador, copie o endereço e abra-o no Safari.',
+      'Toque no ícone de <strong>Compartilhar</strong> (quadrado com seta pra cima).',
+      'Role as opções e toque em <strong>Adicionar à Tela de Início</strong>. Depois confirme em <strong>Adicionar</strong>.'
+    ],
+    nota: 'No iPad, siga os mesmos passos pelo Safari.'
+  });
 }
 
 function mostrarAjudaInstalacaoNaoIOS() {
-  abrirDialogo(`
-    <div class="dialog-body">
-      <div class="dialog-head"><div><p class="eyebrow">Instalação</p><h2 id="app-dialog-title">Instalar Cantina da Escola</h2></div><button class="dialog-close" type="button" data-dialog-close aria-label="Fechar">×</button></div>
-      <p class="subtle">Neste navegador o comando de instalação automática não está disponível. Abra o menu do navegador e procure por <strong>Instalar aplicativo</strong> ou <strong>Adicionar à tela inicial</strong>.</p>
-      <button class="button button-primary button-block" type="button" data-dialog-close>Fechar</button>
-    </div>`);
+  const chromium = ehChromium();
+  abrirPainelAjudaInstalacao({
+    titulo: 'Instalar Cantina da Escola',
+    descricao: chromium
+      ? 'O navegador ainda não apresentou o botão automático de instalação. Você pode instalar pelo menu do navegador.'
+      : 'Este navegador não apresentou o comando automático de instalação. Procure a opção de instalar no menu do navegador.',
+    passos: chromium ? [
+      'Abra o menu do navegador (⋮ ou …), no canto superior.',
+      'Procure <strong>Aplicativos / Apps</strong> ou <strong>Instalar aplicativo</strong>.',
+      'No Microsoft Edge, abra <strong>Menu ⋯ → Mais ferramentas → Aplicativos → Instalar este site como um aplicativo</strong>. No Chrome ou Brave, procure <strong>Instalar página como app</strong> ou <strong>Instalar aplicativo</strong>.',
+      'Confirme em <strong>Instalar</strong> ou <strong>Adicionar</strong>.'
+    ] : [
+      'Abra o menu do navegador.',
+      'Procure <strong>Instalar aplicativo</strong>, <strong>Adicionar à tela inicial</strong> ou opção equivalente.',
+      'Confirme a instalação, se o navegador oferecer essa opção.'
+    ],
+    nota: 'Se o botão “Instalar app” aparecer depois, toque nele para abrir a instalação nativa do navegador.'
+  });
 }
 
 
@@ -794,15 +859,38 @@ root.addEventListener('submit', async (event) => {
 
 logoutButton.addEventListener('click', executarLogout);
 
-installButton.addEventListener('click', async () => {
+// Captura o clique em fase de captura para que nenhum manipulador da página
+// impeça a abertura do guia no iPhone/iPad. Não usa preventDefault nem bloqueia
+// a propagação do evento de clique.
+document.addEventListener('click', async (event) => {
+  const button = event.target?.closest?.('#install-button');
+  if (!button) return;
+
+  if (estaInstalado()) {
+    atualizarBotaoInstalacao();
+    return;
+  }
+
   if (podeMostrarAjudaIOS()) {
     mostrarAjudaInstalacao();
     return;
   }
-  const installed = await instalarAplicativo();
-  if (installed) mostrarToast('Aplicativo instalado.', 'success');
+
+  if (podeInstalar()) {
+    try {
+      const installed = await instalarAplicativo();
+      if (installed) mostrarToast('Aplicativo instalado.', 'success');
+      else mostrarAjudaInstalacaoNaoIOS();
+    } catch (error) {
+      mostrarToast(error.message || 'Não foi possível abrir a instalação automática.', 'error');
+      mostrarAjudaInstalacaoNaoIOS();
+    }
+  } else {
+    mostrarAjudaInstalacaoNaoIOS();
+  }
+
   atualizarBotaoInstalacao();
-});
+}, true);
 
 document.addEventListener('cantina:instalavel', atualizarBotaoInstalacao);
 document.addEventListener('cantina:instalacao-atualizada', atualizarBotaoInstalacao);
