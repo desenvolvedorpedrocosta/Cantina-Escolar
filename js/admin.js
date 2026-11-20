@@ -26,3 +26,7 @@ export function alterarPin({ token, tipo, novoPin }) {
     novoPin
   });
 }
+
+export function consultarRelatorioGestao(token, data) {
+  return apiRequest({ acao: 'relatorioGestao', token, data });
+}
