@@ -1,0 +1,7 @@
+{
+  "name": "cantina-do-gremio-pwa",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Frontend PWA da Cantina do Grêmio"
+}
