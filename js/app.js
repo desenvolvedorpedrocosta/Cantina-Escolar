@@ -34,6 +34,61 @@ function escapeHtml(value) {
   })[char]);
 }
 
+/**
+ * Formata os campos monetários usando apenas os dígitos digitados.
+ * Exemplo: 1 -> 0,01; 15 -> 0,15; 150 -> 1,50.
+ * O valor continua como texto pt-BR e é convertido em centavos
+ * por parseMoneyToCents() no envio dos formulários.
+ */
+function formatarCampoMonetario(input) {
+  const valorAnterior = String(input.value || '');
+  const posicaoAnterior = typeof input.selectionStart === 'number'
+    ? input.selectionStart
+    : valorAnterior.length;
+  const digitosAntesDoCursor = valorAnterior
+    .slice(0, posicaoAnterior)
+    .replace(/\D/g, '').length;
+  const digitos = valorAnterior.replace(/\D/g, '').slice(0, 11);
+
+  const valorFormatado = digitos
+    ? (Number(digitos) / 100).toLocaleString('pt-BR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      })
+    : '';
+
+  input.value = valorFormatado;
+
+  // Mantém o cursor próximo da posição em que o usuário estava digitando.
+  let novaPosicao = 0;
+  let digitosPercorridos = 0;
+  while (novaPosicao < valorFormatado.length && digitosPercorridos < digitosAntesDoCursor) {
+    if (/\d/.test(valorFormatado.charAt(novaPosicao))) digitosPercorridos++;
+    novaPosicao++;
+  }
+  if (digitosAntesDoCursor >= digitos.length) novaPosicao = valorFormatado.length;
+
+  try {
+    input.setSelectionRange(novaPosicao, novaPosicao);
+  } catch (_) {
+    // Alguns teclados/navegadores não permitem alterar seleção neste momento.
+  }
+}
+
+// Captura antes dos eventos dos campos para que cálculos como o troco
+// sempre recebam o valor já formatado (ex.: 1,50), nunca os dígitos crus.
+root.addEventListener('input', (event) => {
+  const campo = event.target.closest('[data-money-input]');
+  if (campo) formatarCampoMonetario(campo);
+}, true);
+
+// No campo de abertura, o valor inicial 0,00 fica selecionado ao tocar,
+// para que a digitação comece diretamente pelos centavos desejados.
+root.addEventListener('focusin', (event) => {
+  const campo = event.target.closest('[data-money-input]');
+  if (campo && campo.value === '0,00') campo.select();
+}, true);
+
 function mostrarToast(message, type = '') {
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
@@ -319,7 +374,7 @@ async function renderDashboard() {
 
   const openPanel = !status?.aberturaRealizada && !status?.fechado
     ? `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Início do expediente</p><h2>Abrir o caixa</h2><p class="subtle">A abertura pode ser feita com R$ 0,00. O fundo para troco pode ser registrado como entrada.</p></div></div>
-        <form id="opening-form" class="form-stack"><div class="field"><label for="opening-value">Dinheiro inicial na gaveta</label><input id="opening-value" name="valor" inputmode="decimal" value="0,00" required><small>Informe o valor físico disponível no início. Use 0,00 quando não houver fundo.</small></div><button class="button button-primary" type="submit" ${!online ? 'disabled' : ''}>Abrir caixa</button></form></section>`
+        <form id="opening-form" class="form-stack"><div class="field"><label for="opening-value">Dinheiro inicial na gaveta</label><input id="opening-value" name="valor" type="text" inputmode="numeric" data-money-input autocomplete="off" value="0,00" placeholder="0,00" required><small>A gaveta começa com R$ 0,00 se não houver dinheiro em espécie. Informe o fundo inicial ou registre-o depois como entrada. Pix não entra no dinheiro da gaveta.</small></div><button class="button button-primary" type="submit" ${!online ? 'disabled' : ''}>Abrir caixa</button></form></section>`
     : '';
 
   const closedPanel = status?.fechado
@@ -349,9 +404,14 @@ async function renderDashboard() {
         ${metric('Total vendido', r.totalVendido, true)}
         ${metric('Vendas em dinheiro', r.dinheiro)}
         ${metric('Vendas por Pix', r.pix)}
-        ${metric('Saldo esperado na gaveta', r.saldoEsperado, true)}
+        ${metric('Dinheiro que deve estar na gaveta', r.saldoEsperado, true)}
         ${metric('Entradas', r.entradas)}
         ${metric('Saídas', r.saidas)}
+      </div>
+      <div class="cash-balance-help">
+        <strong>O que esse valor representa?</strong>
+        <p>É quanto dinheiro em papel e moeda deve estar na gaveta agora. Considera o dinheiro inicial + entradas + vendas em dinheiro − saídas. <strong>Não inclui pagamentos por Pix.</strong></p>
+        ${Number(r.saldoEsperado || 0) === 0 ? '<p class="cash-balance-zero">O dinheiro na gaveta está começando em R$ 0,00. O valor aumenta quando você registra um fundo para troco, outra entrada ou uma venda em dinheiro.</p>' : ''}
       </div>
       <div class="admin-tools"><button class="button button-dark" type="button" data-action="close-cash" ${status.fechado || !online || pendentes ? 'disabled' : ''}>Fechar caixa</button><button class="button button-outline" type="button" data-action="pin-tools">Alterar PINs</button></div>
       <div class="report-controls">
@@ -467,8 +527,8 @@ function mostrarFormularioOperacao(tipo) {
   slot.innerHTML = `<div class="panel form-panel"><div class="panel-head"><div><h3>${titulo}</h3><p class="subtle">${isSaleCash ? 'Informe o total da compra e o dinheiro entregue. O troco será calculado automaticamente.' : isSalePix ? 'Informe o total da compra pago por Pix.' : 'Informe o valor e o motivo da movimentação.'}</p></div></div>
     <form id="movement-form" data-kind="${tipo}" class="form-stack">
       <div class="inline-fields">
-        <div class="field"><label for="movement-value">${isEntry ? 'Valor da entrada' : isSaleCash || isSalePix ? 'Total da compra' : 'Valor da saída'}</label><input id="movement-value" name="valor" inputmode="decimal" placeholder="0,00" required>${isSaleCash || isSalePix ? '<small>Some os produtos e informe o preço final da compra.</small>' : ''}</div>
-        ${isSaleCash ? '<div class="field"><label for="movement-received">Quanto a pessoa entregou?</label><input id="movement-received" name="recebido" inputmode="decimal" placeholder="0,00" required><small>Digite quanto a pessoa deu em dinheiro para pagar.</small></div>' : ''}
+        <div class="field"><label for="movement-value">${isEntry ? 'Valor da entrada' : isSaleCash || isSalePix ? 'Total da compra' : 'Valor da saída'}</label><input id="movement-value" name="valor" type="text" inputmode="numeric" data-money-input autocomplete="off" placeholder="0,00" required>${isSaleCash || isSalePix ? '<small>Some os produtos e informe o preço final da compra.</small>' : ''}</div>
+        ${isSaleCash ? '<div class="field"><label for="movement-received">Quanto a pessoa entregou?</label><input id="movement-received" name="recebido" type="text" inputmode="numeric" data-money-input autocomplete="off" placeholder="0,00" required><small>Digite quanto a pessoa deu em dinheiro para pagar.</small></div>' : ''}
       </div>
       ${isEntry || (!isSaleCash && !isSalePix) ? '<div class="field"><label for="movement-note">Motivo</label><input id="movement-note" name="observacao" maxlength="180" placeholder="Ex.: fundo para troco" required></div>' : ''}
       <div id="change-preview" class="notice hidden"></div>
@@ -499,8 +559,8 @@ function mostrarFormularioFechamento() {
   const slot = document.getElementById('admin-form-slot');
   if (!slot) return;
   const esperado = state.status?.resumo?.saldoEsperado ?? 0;
-  slot.innerHTML = `<div class="panel form-panel"><div class="panel-head"><div><h3>Conferir e fechar o caixa</h3><p class="subtle">Saldo esperado na gaveta: <strong>${formatarMoeda(esperado)}</strong>. Conte o dinheiro físico antes de confirmar.</p></div></div>
-    <form id="close-form" class="form-stack"><div class="field"><label for="counted-value">Dinheiro contado na gaveta</label><input id="counted-value" name="contado" inputmode="decimal" placeholder="0,00" required></div>
+  slot.innerHTML = `<div class="panel form-panel"><div class="panel-head"><div><h3>Conferir e fechar o caixa</h3><p class="subtle">Dinheiro que deve estar na gaveta: <strong>${formatarMoeda(esperado)}</strong>. Conte somente as notas e moedas; pagamentos por Pix não entram nessa conferência.</p></div></div>
+    <form id="close-form" class="form-stack"><div class="field"><label for="counted-value">Dinheiro contado na gaveta</label><input id="counted-value" name="contado" type="text" inputmode="numeric" data-money-input autocomplete="off" placeholder="0,00" required></div>
     <div class="field"><label for="close-note">Observação (opcional)</label><input id="close-note" name="observacao" maxlength="180" placeholder="Observação do fechamento"></div>
     <div class="notice warning"><div><strong>Confirmação de sincronização</strong>O fechamento só será permitido depois de sincronizar todas as movimentações pendentes.</div></div>
     <div class="form-actions"><button class="button button-primary" type="submit" ${!navigator.onLine ? 'disabled' : ''}>Confirmar fechamento</button><button class="button button-outline" type="button" data-action="cancel-admin">Cancelar</button></div></form></div>`;
