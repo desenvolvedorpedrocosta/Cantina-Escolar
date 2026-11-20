@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cantina-gremio-shell-v1';
+const CACHE_NAME = 'cantina-gremio-shell-v3';
 const SHELL_FILES = [
   './',
   './index.html',
