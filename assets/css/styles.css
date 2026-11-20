@@ -315,3 +315,44 @@ body { overflow-x: hidden; }
   .cash-balance-help { padding: 11px 12px; font-size: 11px; }
   .cash-balance-help > strong { font-size: 12px; }
 }
+
+
+/* Guia de instalação PWA — painel independente e robusto em iPhone/iPad e Edge */
+.install-help-open { overflow: hidden; }
+.install-help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: max(16px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  background: rgba(5, 20, 32, .72);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.install-help-card {
+  width: min(500px, 100%);
+  max-height: min(88dvh, 760px);
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid rgba(255,255,255,.3);
+  border-radius: 20px;
+  color: var(--ink);
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(0,0,0,.32);
+  -webkit-overflow-scrolling: touch;
+}
+.install-help-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.install-help-head h2 { margin: 0; font-size: clamp(21px, 5vw, 26px); }
+.install-help-close { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 50%; color: var(--navy); background: #fff; font-size: 25px; line-height: 1; cursor: pointer; }
+.install-help-description { margin: 16px 0; color: var(--ink); font-size: 14px; line-height: 1.6; }
+.install-help-steps { display: grid; gap: 11px; margin: 14px 0 18px; padding: 0; list-style: none; }
+.install-help-steps li { display: flex; align-items: flex-start; gap: 11px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #f7fafb; font-size: 13px; line-height: 1.55; }
+.install-help-number { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; border-radius: 9px; color: #fff; background: var(--teal); font-weight: 800; }
+.install-help-note { margin: 0 0 16px; padding: 11px 12px; border-radius: 10px; color: #385b56; background: #f0f8f6; font-size: 12px; line-height: 1.5; }
+@media (max-width: 560px) {
+  .install-help-card { padding: 18px 15px; border-radius: 17px; }
+  .install-help-description { font-size: 13px; }
+  .install-help-steps li { padding: 11px; font-size: 12px; }
+}
