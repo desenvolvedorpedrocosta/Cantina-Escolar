@@ -18,7 +18,8 @@ const state = {
   sessao: null,
   status: null,
   ultimaConsulta: null,
-  busy: false
+  busy: false,
+  statusError: null
 };
 
 const STORAGE_STATUS = 'cantina_status_cache';
@@ -142,9 +143,12 @@ async function renderDashboard() {
   const pendentes = await quantidadePendente();
   const online = navigator.onLine;
   const cacheTime = status?.cacheAtualizadoEm;
-  const cacheWarning = !online
-    ? `<div class="notice warning" style="margin-bottom:16px"><div><strong>Modo sem internet</strong>${cacheTime ? `Os dados exibidos são da última atualização em ${escapeHtml(new Date(cacheTime).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}))}. Novas movimentações ficarão pendentes neste aparelho.` : 'Ainda não há situação do caixa salva neste aparelho. Conecte à internet para carregar os dados antes de operar.'}</div></div>`
-    : '';
+  let cacheWarning = '';
+  if (!online) {
+    cacheWarning = `<div class="notice warning" style="margin-bottom:16px"><div><strong>Sem conexão com a internet</strong>${cacheTime ? `Exibindo os dados da última consulta, feita às ${escapeHtml(new Date(cacheTime).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}))}. Novos lançamentos ficarão guardados neste aparelho até a conexão voltar.` : 'Este aparelho ainda não carregou o caixa. Conecte-se à internet antes de abrir ou movimentar o caixa.'}</div></div>`;
+  } else if (state.statusError) {
+    cacheWarning = `<div class="notice warning" style="margin-bottom:16px"><div><strong>Não foi possível atualizar o caixa</strong>Os dados abaixo podem estar desatualizados. Detalhe: ${escapeHtml(state.statusError)}</div></div>`;
+  }
 
   const openPanel = !status?.aberturaRealizada && !status?.fechado
     ? `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Início do expediente</p><h2>Abrir o caixa</h2><p class="subtle">A abertura pode ser feita com R$ 0,00. O fundo para troco pode ser registrado como entrada.</p></div></div>
@@ -226,6 +230,7 @@ async function atualizarStatus({ silencioso = false } = {}) {
   try {
     const status = await consultarStatus(state.sessao.token);
     state.status = status;
+    state.statusError = null;
     state.ultimaConsulta = Date.now();
     salvarStatusCache(status);
     await renderDashboard();
@@ -238,14 +243,20 @@ async function atualizarStatus({ silencioso = false } = {}) {
       return;
     }
     const cached = obterStatusCache();
+    state.statusError = error.message || 'Falha de comunicação com o servidor.';
+    logoutButton.classList.remove('hidden');
+
     if (cached) {
       state.status = cached;
       state.ultimaConsulta = cached.cacheAtualizadoEm || null;
       await renderDashboard();
     } else {
       state.status = null;
-      root.innerHTML = `<section class="panel"><div class="notice warning"><div><strong>Não foi possível consultar o caixa</strong>O aplicativo não tem uma situação recente salva neste aparelho. Conecte-se e tente novamente antes de abrir ou movimentar o caixa.</div></div><div class="form-actions"><button class="button button-primary" type="button" id="retry-status">Tentar novamente</button></div></section>`;
-      document.getElementById('retry-status')?.addEventListener('click', () => atualizarStatus());
+      const versaoAntiga = /operação não reconhecida/i.test(state.statusError);
+      const orientacao = versaoAntiga
+        ? 'O Web App publicado ainda não reconhece a consulta do caixa. Atualize o Code.gs na cópia de homologação e publique uma Nova versão da implantação.'
+        : 'Confira se o endereço /exec configurado pertence à cópia de homologação e se a implantação dessa cópia está atualizada.';
+      root.innerHTML = `<section class="panel"><div class="notice warning"><div><strong>O login funcionou, mas não foi possível carregar o caixa</strong>${escapeHtml(orientacao)}</div></div><div class="diagnostic-box"><strong>Detalhe recebido do servidor</strong><code>${escapeHtml(state.statusError)}</code></div><p class="subtle">Você pode tentar novamente ou sair e voltar para a tela de acesso. Nenhuma venda foi registrada por esta consulta.</p><div class="form-actions"><button class="button button-primary" type="button" id="retry-status">Tentar novamente</button><button class="button button-outline" type="button" data-action="logout">Sair e voltar ao login</button></div></section>`;
     }
     if (!silencioso) mostrarToast(error.message, 'error');
   }
@@ -279,15 +290,15 @@ function mostrarFormularioOperacao(tipo) {
     : isSaleCash ? 'Registrar venda em dinheiro'
     : isEntry ? 'Registrar entrada de dinheiro' : 'Registrar saída de dinheiro';
 
-  slot.innerHTML = `<div class="panel form-panel"><div class="panel-head"><div><h3>${titulo}</h3><p class="subtle">${isSaleCash ? 'Informe quanto foi recebido para calcular o troco.' : isSalePix ? 'O valor registrado será contabilizado como venda por Pix.' : 'Informe o valor e o motivo da movimentação.'}</p></div></div>
+  slot.innerHTML = `<div class="panel form-panel"><div class="panel-head"><div><h3>${titulo}</h3><p class="subtle">${isSaleCash ? 'Informe o total da compra e o dinheiro entregue. O troco será calculado automaticamente.' : isSalePix ? 'Informe o total da compra pago por Pix.' : 'Informe o valor e o motivo da movimentação.'}</p></div></div>
     <form id="movement-form" data-kind="${tipo}" class="form-stack">
       <div class="inline-fields">
-        <div class="field"><label for="movement-value">${isEntry ? 'Valor da entrada' : isSaleCash || isSalePix ? 'Valor da venda' : 'Valor da saída'}</label><input id="movement-value" name="valor" inputmode="decimal" placeholder="0,00" required></div>
-        ${isSaleCash ? '<div class="field"><label for="movement-received">Valor recebido</label><input id="movement-received" name="recebido" inputmode="decimal" placeholder="0,00" required></div>' : ''}
+        <div class="field"><label for="movement-value">${isEntry ? 'Valor da entrada' : isSaleCash || isSalePix ? 'Total da compra' : 'Valor da saída'}</label><input id="movement-value" name="valor" inputmode="decimal" placeholder="0,00" required>${isSaleCash || isSalePix ? '<small>Some os produtos e informe o preço final da compra.</small>' : ''}</div>
+        ${isSaleCash ? '<div class="field"><label for="movement-received">Quanto a pessoa entregou?</label><input id="movement-received" name="recebido" inputmode="decimal" placeholder="0,00" required><small>Digite quanto a pessoa deu em dinheiro para pagar.</small></div>' : ''}
       </div>
       ${isEntry || (!isSaleCash && !isSalePix) ? '<div class="field"><label for="movement-note">Motivo</label><input id="movement-note" name="observacao" maxlength="180" placeholder="Ex.: fundo para troco" required></div>' : ''}
       <div id="change-preview" class="notice hidden"></div>
-      <div class="form-actions"><button class="button button-primary" type="submit">Registrar movimentação</button><button class="button button-outline" type="button" data-action="cancel-operation">Cancelar</button></div>
+      <div class="form-actions"><button class="button button-primary" type="submit">${isSaleCash || isSalePix ? 'Confirmar venda' : 'Registrar movimentação'}</button><button class="button button-outline" type="button" data-action="cancel-operation">Cancelar</button></div>
     </form></div>`;
 
   const valueInput = document.getElementById('movement-value');
@@ -340,6 +351,8 @@ async function tratarLogin(form) {
   setBusy(true);
   try {
     state.sessao = await entrar({ perfil: state.perfilLogin, nome, pin });
+    state.statusError = null;
+    logoutButton.classList.remove('hidden');
     const pending = await quantidadePendente();
     if (pending && navigator.onLine) {
       try { await sincronizarFila(); } catch (error) { /* a fila é preservada se a sessão/conexão falhar */ }
@@ -427,6 +440,27 @@ async function tratarAlteracaoPin(form) {
   } finally { setBusy(false); }
 }
 
+async function executarLogout() {
+  const pendentes = await quantidadePendente().catch(() => 0);
+  if (pendentes > 0) {
+    const confirmar = window.confirm(
+      `Há ${pendentes} movimentação(ões) aguardando envio. Elas continuarão guardadas neste aparelho e poderão ser sincronizadas depois que alguém entrar novamente. Deseja sair?`
+    );
+    if (!confirmar) return;
+  }
+
+  sair();
+  localStorage.removeItem(STORAGE_STATUS);
+  state.sessao = null;
+  state.status = null;
+  state.statusError = null;
+  state.ultimaConsulta = null;
+  logoutButton.classList.add('hidden');
+  renderLogin(pendentes > 0
+    ? `${pendentes} movimentação(ões) continuam salvas neste aparelho. Entre novamente para sincronizá-las.`
+    : 'Você saiu do sistema.');
+}
+
 root.addEventListener('click', async (event) => {
   const roleButton = event.target.closest('[data-role]');
   if (roleButton) {
@@ -440,11 +474,13 @@ root.addEventListener('click', async (event) => {
   const action = button.dataset.action;
 
   try {
-    if (action === 'sale-pix' || action === 'sale-cash' || action === 'entry' || action === 'exit') {
+    if (action === 'logout') {
+      await executarLogout();
+    } else if (action === 'sale-pix' || action === 'sale-cash' || action === 'entry' || action === 'exit') {
       mostrarFormularioOperacao(action);
     } else if (action === 'cancel-operation') {
       document.getElementById('operation-form-slot').innerHTML = '';
-    } else if (action === 'refresh') {
+    } else if (action === 'retry-status' || action === 'refresh') {
       await atualizarStatus();
     } else if (action === 'sync') {
       await sincronizarEAtualizar();
@@ -475,12 +511,7 @@ root.addEventListener('submit', async (event) => {
   }
 });
 
-logoutButton.addEventListener('click', () => {
-  sair();
-  state.sessao = null;
-  state.status = null;
-  renderLogin();
-});
+logoutButton.addEventListener('click', executarLogout);
 
 installButton.addEventListener('click', async () => {
   const installed = await instalarAplicativo();
@@ -513,9 +544,10 @@ async function iniciar() {
     return;
   }
 
+  logoutButton.classList.remove('hidden');
   state.status = obterStatusCache();
   if (!navigator.onLine && !state.status) {
-    root.innerHTML = '<section class="panel"><div class="notice warning"><div><strong>Sem conexão e sem situação do caixa salva</strong>Conecte-se à internet ao menos uma vez neste aparelho para carregar o estado compartilhado do caixa.</div></div><button class="button button-outline" id="retry-status" type="button">Tentar novamente</button></section>';
+    root.innerHTML = '<section class="panel"><div class="notice warning"><div><strong>Sem conexão e sem dados do caixa neste aparelho</strong>Conecte-se à internet para carregar o caixa compartilhado pela primeira vez.</div></div><div class="form-actions"><button class="button button-outline" id="retry-status" type="button">Tentar novamente</button><button class="button button-outline" type="button" data-action="logout">Sair e voltar ao login</button></div></section>';
     document.getElementById('retry-status').addEventListener('click', () => atualizarStatus());
     return;
   }
