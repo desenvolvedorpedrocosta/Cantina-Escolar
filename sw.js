@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cantina-gremio-shell-v4';
+const CACHE_NAME = 'cantina-da-escola-shell-v5';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const SHELL_FILES = [
   './js/cash.js',
   './js/admin.js',
   './js/reports.js',
+  './js/pdf-report.js',
   './js/app.js'
 ];
 
