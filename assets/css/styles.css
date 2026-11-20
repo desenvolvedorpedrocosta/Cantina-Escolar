@@ -288,3 +288,30 @@ body { overflow-x: hidden; }
 @media print {
   .topbar, .footer, .toast-region, .app-dialog, .splash-screen { display: none !important; }
 }
+
+
+/* Explicação do dinheiro esperado na gaveta */
+.cash-balance-help {
+  display: grid;
+  gap: 6px;
+  margin-top: 11px;
+  padding: 13px 15px;
+  border: 1px solid #d7e8e5;
+  border-radius: 12px;
+  background: #f4faf8;
+  color: #385b56;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.cash-balance-help > strong { color: #174f47; font-size: 13px; }
+.cash-balance-help p { margin: 0; }
+.cash-balance-help .cash-balance-zero {
+  margin-top: 3px;
+  padding-top: 8px;
+  border-top: 1px solid #dcece7;
+  color: #245d52;
+}
+@media (max-width: 560px) {
+  .cash-balance-help { padding: 11px 12px; font-size: 11px; }
+  .cash-balance-help > strong { font-size: 12px; }
+}
