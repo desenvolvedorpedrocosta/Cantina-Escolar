@@ -238,3 +238,53 @@ body { overflow-x: hidden; }
   .metric strong { font-size: 16px; }
   .action-tile { padding: 9px; }
 }
+
+
+/* Identidade Cantina da Escola: splash, diálogos, login lembrado e painel da gestão */
+.splash-screen { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 24px; color: #fff; background: linear-gradient(135deg, #102b46 0%, #176b76 52%, #20a487 100%); opacity: 1; visibility: visible; transition: opacity .32s ease, visibility .32s ease; }
+.splash-screen.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+.splash-content { width: min(380px, 100%); display: grid; justify-items: center; text-align: center; }
+.splash-icon { display: grid; place-items: center; width: 94px; height: 94px; margin-bottom: 22px; border: 1px solid rgba(255,255,255,.24); border-radius: 28px; background: rgba(255,255,255,.14); font-size: 49px; box-shadow: 0 18px 45px rgba(0,0,0,.14); animation: splash-bounce .95s ease-in-out infinite alternate; }
+.splash-kicker { margin: 0 0 5px; color: rgba(255,255,255,.8); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
+.splash-content h1 { margin: 0; color: #fff; font-size: clamp(29px, 7vw, 39px); letter-spacing: -.04em; }
+.splash-message { margin: 12px 0 22px; color: rgba(255,255,255,.82); font-size: 13px; }
+.splash-progress { width: min(230px, 75vw); height: 5px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.24); }
+.splash-progress span { display: block; width: 0; height: 100%; border-radius: inherit; background: #fff; animation: splash-load 1.8s ease-out forwards; }
+@keyframes splash-bounce { from { transform: translateY(0) rotate(-4deg); } to { transform: translateY(-10px) rotate(4deg); } }
+@keyframes splash-load { 0% { width: 0; } 35% { width: 42%; } 75% { width: 78%; } 100% { width: 100%; } }
+.remember-login { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.remember-login input { width: 17px; height: 17px; accent-color: var(--teal); flex: 0 0 auto; }
+.login-extra-actions { display: grid; grid-template-columns: 1fr; gap: 9px; margin-top: 13px; }
+.app-dialog { width: min(480px, calc(100% - 24px)); max-width: 480px; max-height: min(88vh, 760px); padding: 0; overflow: auto; border: 0; border-radius: 20px; color: var(--ink); background: #fff; box-shadow: 0 24px 80px rgba(8,28,43,.28); }
+.app-dialog::backdrop { background: rgba(5,20,32,.62); backdrop-filter: blur(3px); }
+.dialog-body { padding: 22px; }
+.dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 17px; }
+.dialog-head h2 { margin: 0 0 5px; }
+.dialog-close { width: 36px; height: 36px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%; color: var(--navy); background: #fff; font-size: 20px; line-height: 1; }
+.share-link { display: block; width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #f7fafb; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.qr-wrap { display: grid; justify-items: center; gap: 9px; margin: 17px auto; padding: 15px; width: fit-content; border: 1px solid var(--line); border-radius: 15px; background: #fff; }
+.qr-wrap canvas, .qr-wrap img { width: 180px !important; height: 180px !important; image-rendering: pixelated; }
+.qr-caption { color: var(--muted); font-size: 11px; text-align: center; }
+.copy-feedback { min-height: 18px; margin: 8px 0 0; color: var(--teal); font-size: 12px; font-weight: 700; text-align: center; }
+.install-steps { display: grid; gap: 12px; margin: 15px 0; padding: 0; list-style: none; }
+.install-steps li { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; font-size: 13px; line-height: 1.5; }
+.install-step-number { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; border-radius: 9px; color: #fff; background: var(--teal); font-weight: 800; }
+.install-symbol { font-size: 18px; }
+.analytics-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+.analytics-list { display: grid; gap: 11px; }
+.analytics-row { display: grid; grid-template-columns: minmax(95px, 1fr) minmax(100px, 2fr) auto; gap: 10px; align-items: center; font-size: 12px; }
+.analytics-bar { height: 9px; overflow: hidden; border-radius: 999px; background: #eaf0f3; }
+.analytics-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #168b79, #4fd1b5); }
+.report-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 15px; }
+.report-controls .field { flex: 1 1 170px; }
+.report-controls .button { flex: 0 0 auto; }
+@media (max-width: 560px) {
+  .dialog-body { padding: 18px 15px; }
+  .analytics-grid { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+  .analytics-row { grid-template-columns: minmax(75px,1fr) minmax(55px,1fr) auto; gap: 7px; font-size: 11px; }
+  .report-controls { display: grid; grid-template-columns: 1fr; }
+  .report-controls .field, .report-controls .button { width: 100%; }
+}
+@media print {
+  .topbar, .footer, .toast-region, .app-dialog, .splash-screen { display: none !important; }
+}
