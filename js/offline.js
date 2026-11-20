@@ -1,5 +1,5 @@
 import { apiRequest } from './api.js';
-import { listarFila, salvarNaFila, removerDaFila, atualizarFila } from './storage.js';
+import { listarFila, salvarNaFila, removerDaFila, atualizarFila, obterSessao } from './storage.js';
 
 function criarId() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -42,7 +42,7 @@ export async function enviarMovimentacao(payload) {
 }
 
 async function sincronizarItem(item) {
-  const sessao = JSON.parse(localStorage.getItem('cantina_sessao') || 'null');
+  const sessao = obterSessao();
   if (!sessao?.token) {
     throw new Error('Entre novamente para sincronizar as movimentações pendentes.');
   }

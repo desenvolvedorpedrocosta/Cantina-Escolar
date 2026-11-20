@@ -1,17 +1,21 @@
 import { entrar, sessaoAtual, sair } from './auth.js';
 import { abrirCaixa, registrarVenda, registrarAjuste, parseMoneyToCents } from './cash.js';
-import { consultarStatus, fecharCaixa, alterarPin } from './admin.js';
+import { consultarStatus, fecharCaixa, alterarPin, consultarRelatorioGestao } from './admin.js';
 import { formatarMoeda, formatarDataHora, formatarTipo } from './reports.js';
 import { sincronizarFila, quantidadePendente, detalhesFila } from './offline.js';
-import { obterSessao } from './storage.js';
+import { obterSessao, prefereLembrarLogin } from './storage.js';
 import { urlConfigurada } from './api.js';
-import { instalarAplicativo, podeInstalar } from './install.js';
+import { instalarAplicativo, podeMostrarAjudaIOS, tipoInstalacao, estaInstalado } from './install.js';
+import { criarRelatorioPDF } from './pdf-report.js';
 
 const root = document.getElementById('app-root');
 const connection = document.getElementById('connection-status');
 const logoutButton = document.getElementById('logout-button');
 const installButton = document.getElementById('install-button');
 const toastRegion = document.getElementById('toast-region');
+const appDialog = document.getElementById('app-dialog');
+const appDialogContent = document.getElementById('app-dialog-content');
+let qrcodeLibraryPromise = null;
 
 const state = {
   perfilLogin: 'OPERADORA',
@@ -67,13 +71,142 @@ function dataHojePt() {
   }).format(new Date());
 }
 
+
+function atualizarBotaoInstalacao() {
+  const tipo = tipoInstalacao();
+  if (!installButton) return;
+  if (tipo === 'instalado' || tipo === 'indisponivel' || estaInstalado()) {
+    installButton.classList.add('hidden');
+    return;
+  }
+  installButton.textContent = tipo === 'ios' ? 'Como instalar' : 'Instalar app';
+  installButton.classList.remove('hidden');
+}
+
+function abrirDialogo(html) {
+  appDialogContent.innerHTML = html;
+  if (!appDialog.open) appDialog.showModal();
+}
+
+function fecharDialogo() {
+  if (appDialog.open) appDialog.close();
+  appDialogContent.innerHTML = '';
+}
+
+function linkCompartilhamento() {
+  const url = new URL(window.location.href);
+  url.hash = '';
+  url.search = '';
+  return url.href;
+}
+
+async function copiarTexto(texto) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(texto);
+    return;
+  }
+  const area = document.createElement('textarea');
+  area.value = texto;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  const ok = document.execCommand('copy');
+  area.remove();
+  if (!ok) throw new Error('Não foi possível copiar o link neste navegador.');
+}
+
+async function mostrarModalCompartilharApp() {
+  const link = linkCompartilhamento();
+  abrirDialogo(`
+    <div class="dialog-body">
+      <div class="dialog-head"><div><p class="eyebrow">Acesso rápido</p><h2 id="app-dialog-title">Compartilhar App</h2><p class="subtle">Envie este link para abrir a Cantina da Escola em outro aparelho.</p></div><button class="dialog-close" type="button" data-dialog-close aria-label="Fechar">×</button></div>
+      <div class="share-link" id="share-app-url">${escapeHtml(link)}</div>
+      <div class="qr-wrap"><div id="share-app-qr"></div><span class="qr-caption">Aponte a câmera do celular para o QR Code.</span></div>
+      <button type="button" class="button button-primary button-block" id="copy-app-link">Copiar Link</button>
+      <p class="copy-feedback" id="copy-app-feedback" aria-live="polite"></p>
+    </div>`);
+  const qrHost = document.getElementById('share-app-qr');
+  if (qrHost) qrHost.textContent = 'Gerando QR Code…';
+  try {
+    if (!window.QRCode) {
+      if (!qrcodeLibraryPromise) {
+        qrcodeLibraryPromise = new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+          script.integrity = 'sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA==';
+          script.crossOrigin = 'anonymous';
+          script.referrerPolicy = 'no-referrer';
+          script.onload = resolve;
+          script.onerror = () => reject(new Error('Não foi possível carregar o gerador de QR Code.'));
+          document.head.appendChild(script);
+        });
+      }
+      await qrcodeLibraryPromise;
+    }
+    if (qrHost?.isConnected && window.QRCode) {
+      qrHost.textContent = '';
+      new window.QRCode(qrHost, {
+        text: link,
+        width: 180,
+        height: 180,
+        colorDark: '#102b46',
+        colorLight: '#ffffff',
+        correctLevel: window.QRCode.CorrectLevel.M
+      });
+    }
+  } catch (error) {
+    qrcodeLibraryPromise = null;
+    if (qrHost?.isConnected) qrHost.textContent = 'QR Code indisponível agora. Use o link acima ou tente novamente com internet.';
+  }
+  document.getElementById('copy-app-link')?.addEventListener('click', async () => {
+    const feedback = document.getElementById('copy-app-feedback');
+    const button = document.getElementById('copy-app-link');
+    try {
+      await copiarTexto(link);
+      button.textContent = 'Copiado!';
+      if (feedback) feedback.textContent = 'Link copiado com sucesso.';
+      window.setTimeout(() => { if (button.isConnected) button.textContent = 'Copiar Link'; }, 2200);
+    } catch (error) {
+      if (feedback) feedback.textContent = error.message;
+    }
+  });
+}
+
+function mostrarAjudaInstalacao() {
+  const safari = ehSafariIOS();
+  abrirDialogo(`
+    <div class="dialog-body">
+      <div class="dialog-head"><div><p class="eyebrow">Instalar no iPhone ou iPad</p><h2 id="app-dialog-title">Adicionar à Tela de Início</h2><p class="subtle">No iPhone e iPad, a instalação é feita pelo Safari.</p></div><button class="dialog-close" type="button" data-dialog-close aria-label="Fechar">×</button></div>
+      ${!safari ? '<div class="notice warning"><div><strong>Abra primeiro no Safari</strong>Copie o link do aplicativo e abra-o no navegador Safari para continuar.</div></div>' : ''}
+      <ol class="install-steps">
+        <li><span class="install-step-number">1</span><span>Abra o link da Cantina da Escola no <strong>Safari</strong>.</span></li>
+        <li><span class="install-step-number">2</span><span>Toque no botão <strong>Compartilhar</strong> <span class="install-symbol">□↑</span> na barra do Safari.</span></li>
+        <li><span class="install-step-number">3</span><span>Role as opções e toque em <strong>Adicionar à Tela de Início</strong>. Depois confirme em <strong>Adicionar</strong>.</span></li>
+      </ol>
+      <button type="button" class="button button-primary button-block" data-dialog-close>Entendi</button>
+    </div>`);
+}
+
+function mostrarAjudaInstalacaoNaoIOS() {
+  abrirDialogo(`
+    <div class="dialog-body">
+      <div class="dialog-head"><div><p class="eyebrow">Instalação</p><h2 id="app-dialog-title">Instalar Cantina da Escola</h2></div><button class="dialog-close" type="button" data-dialog-close aria-label="Fechar">×</button></div>
+      <p class="subtle">Neste navegador o comando de instalação automática não está disponível. Abra o menu do navegador e procure por <strong>Instalar aplicativo</strong> ou <strong>Adicionar à tela inicial</strong>.</p>
+      <button class="button button-primary button-block" type="button" data-dialog-close>Fechar</button>
+    </div>`);
+}
+
+
 function renderLogin(message = '') {
   logoutButton.classList.add('hidden');
   root.innerHTML = `
     <section class="login-wrap">
       <div class="login-card">
+        <p class="eyebrow">Cantina da Escola</p>
         <h1>Bem-vindo à cantina</h1>
-        <p class="subtle">Entre para registrar as movimentações e acompanhar o caixa do dia.</p>
+        <p class="subtle">Entre para registrar as vendas e movimentações do caixa.</p>
         ${message ? `<div class="notice warning" style="margin-top:16px">${escapeHtml(message)}</div>` : ''}
         ${!urlConfigurada() ? '<div class="notice error" style="margin-top:16px"><strong>Configuração necessária</strong>Informe o endereço do Web App no arquivo <code>js/config.js</code> antes de publicar.</div>' : ''}
         <div class="role-switch" role="group" aria-label="Tipo de acesso">
@@ -81,13 +214,17 @@ function renderLogin(message = '') {
           <button type="button" data-role="ADMIN" class="${state.perfilLogin === 'ADMIN' ? 'active' : ''}">Gestão</button>
         </div>
         <form id="login-form" class="form-stack">
-          ${state.perfilLogin === 'OPERADORA' ? '<div class="field"><label for="login-name">Seu nome</label><input id="login-name" name="nome" type="text" maxlength="60" autocomplete="name" placeholder="Digite seu nome" required></div>' : '<div class="notice">Acesso administrativo com o PIN compartilhado da gestão.</div>'}
+          ${state.perfilLogin === 'OPERADORA' ? '<div class="field"><label for="login-name">Seu nome</label><input id="login-name" name="nome" type="text" maxlength="60" autocomplete="name" placeholder="Digite seu nome" required></div>' : ''}
           <div class="field"><label for="login-pin">PIN de 4 números</label><input id="login-pin" name="pin" class="pin-input" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="••••" required></div>
+          <label class="remember-login"><input type="checkbox" name="lembrarLogin" ${prefereLembrarLogin() ? 'checked' : ''}><span>Salvar meu login neste aparelho</span></label>
           <button class="button button-primary button-block" type="submit" ${!urlConfigurada() ? 'disabled' : ''}>Entrar no sistema</button>
         </form>
-        <p class="subtle" style="margin:17px 0 0;font-size:11px">As movimentações pendentes ficam armazenadas neste aparelho até a sincronização.</p>
+        <div class="login-extra-actions">
+          <button class="button button-outline button-block" type="button" data-action="share-app">Compartilhar App</button>
+        </div>
       </div>
     </section>`;
+  atualizarBotaoInstalacao();
 }
 
 function statusLabel(status) {
@@ -136,6 +273,37 @@ async function renderPendingPanel() {
     </section>`;
 }
 
+function renderAnalytics(indicadores = {}) {
+  const quantidade = Number(indicadores.quantidadeVendas || 0);
+  const media = Number(indicadores.ticketMedio || 0);
+  const cash = Number(indicadores.totalDinheiro || 0);
+  const pix = Number(indicadores.totalPix || 0);
+  const total = cash + pix;
+  const cashPct = total > 0 ? Math.round((cash / total) * 100) : 0;
+  const pixPct = total > 0 ? 100 - cashPct : 0;
+  const operadores = Array.isArray(indicadores.operadores) ? indicadores.operadores : [];
+  const ranking = operadores.length ? operadores.slice(0, 5).map((item) => `
+    <div class="analytics-row"><strong>${escapeHtml(item.nome)}</strong><div class="analytics-bar"><span style="width:${Math.max(0, Math.min(100, Number(item.percentual || 0)))}%"></span></div><span>${formatarMoeda(item.totalVendido)}</span></div>`).join('') : '<div class="empty-state">Ainda não há vendas por operadora.</div>';
+  return `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Acompanhamento</p><h2>Indicadores do dia</h2><p class="subtle">Números calculados com todas as movimentações confirmadas de hoje.</p></div></div>
+    <div class="analytics-grid">
+      <div class="metric"><span>Quantidade de vendas</span><strong>${quantidade}</strong></div>
+      <div class="metric"><span>Valor médio por venda</span><strong>${formatarMoeda(media)}</strong></div>
+      <div class="metric"><span>Movimentações registradas</span><strong>${Number(indicadores.quantidadeMovimentacoes || 0)}</strong></div>
+      <div class="metric"><span>Entradas registradas</span><strong>${Number(indicadores.quantidadeEntradas || 0)}</strong></div>
+      <div class="metric"><span>Saídas registradas</span><strong>${Number(indicadores.quantidadeSaidas || 0)}</strong></div>
+      <div class="metric"><span>Vendas em dinheiro</span><strong>${Number(indicadores.quantidadeDinheiro || 0)}</strong></div>
+      <div class="metric"><span>Vendas por Pix</span><strong>${Number(indicadores.quantidadePix || 0)}</strong></div>
+    </div>
+    <div class="grid-two" style="margin-top:15px">
+      <div><h3>Vendas por forma de pagamento</h3><div class="analytics-list">
+        <div class="analytics-row"><strong>Dinheiro</strong><div class="analytics-bar"><span style="width:${cashPct}%"></span></div><span>${cashPct}%</span></div>
+        <div class="analytics-row"><strong>Pix</strong><div class="analytics-bar"><span style="width:${pixPct}%"></span></div><span>${pixPct}%</span></div>
+      </div><p class="subtle" style="margin-top:8px">Dinheiro: ${formatarMoeda(cash)} · Pix: ${formatarMoeda(pix)}</p></div>
+      <div><h3>Vendas por operadora</h3><div class="analytics-list">${ranking}</div></div>
+    </div>
+  </section>`;
+}
+
 async function renderDashboard() {
   const sessao = state.sessao;
   const status = state.status;
@@ -172,8 +340,10 @@ async function renderDashboard() {
     : '';
 
   let adminPanel = '';
+  let adminAnalytics = '';
   if (sessao.perfil === 'ADMIN' && status?.resumo) {
     const r = status.resumo;
+    const dataRelatorio = status.data || new Date().toISOString().slice(0, 10);
     adminPanel = `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Visão da gestão</p><h2>Resumo financeiro de hoje</h2></div><button class="button button-outline button-small" type="button" data-action="refresh">Atualizar</button></div>
       <div class="metric-grid">
         ${metric('Total vendido', r.totalVendido, true)}
@@ -184,9 +354,15 @@ async function renderDashboard() {
         ${metric('Saídas', r.saidas)}
       </div>
       <div class="admin-tools"><button class="button button-dark" type="button" data-action="close-cash" ${status.fechado || !online || pendentes ? 'disabled' : ''}>Fechar caixa</button><button class="button button-outline" type="button" data-action="pin-tools">Alterar PINs</button></div>
+      <div class="report-controls">
+        <div class="field"><label for="report-date">Data do relatório</label><input id="report-date" type="date" value="${escapeHtml(dataRelatorio)}" max="${escapeHtml(dataRelatorio)}"></div>
+        <button class="button button-primary" type="button" data-action="report-pdf" ${!online ? 'disabled' : ''}>Gerar e compartilhar PDF</button>
+      </div>
+      <p class="subtle" style="margin:9px 0 0">O relatório inclui o resumo e todas as movimentações confirmadas da data selecionada.</p>
       <div id="admin-form-slot"></div>
       ${pendentes ? '<p class="subtle" style="margin:12px 0 0">O fechamento ficará disponível depois que todas as movimentações forem sincronizadas.</p>' : ''}
     </section>`;
+    adminAnalytics = renderAnalytics(status.indicadores || {});
   }
 
   const movements = status?.movimentacoes || [];
@@ -203,13 +379,14 @@ async function renderDashboard() {
     ${closedPanel}
     ${actionPanel}
     ${adminPanel}
+    ${adminAnalytics}
     <section class="panel"><div class="panel-head"><div><p class="eyebrow">Registro compartilhado</p><h2>Movimentações de hoje</h2><p class="subtle">Últimos lançamentos confirmados no servidor.</p></div><button class="button button-outline button-small" type="button" data-action="refresh">Atualizar</button></div>
       ${renderMovements(movements)}
     </section>
     ${pendentes ? await renderPendingPanel() : ''}`;
 
   logoutButton.classList.remove('hidden');
-  if (podeInstalar()) installButton.classList.remove('hidden');
+  atualizarBotaoInstalacao();
 }
 
 async function atualizarStatus({ silencioso = false } = {}) {
@@ -342,12 +519,13 @@ async function tratarLogin(form) {
   const formData = new FormData(form);
   const nome = String(formData.get('nome') || '').trim();
   const pin = String(formData.get('pin') || '').trim();
+  const lembrarNesteAparelho = formData.get('lembrarLogin') === 'on';
   if (!/^\d{4}$/.test(pin)) throw new Error('Digite um PIN de quatro números.');
   if (state.perfilLogin === 'OPERADORA' && nome.length < 2) throw new Error('Informe seu nome.');
 
   setBusy(true);
   try {
-    state.sessao = await entrar({ perfil: state.perfilLogin, nome, pin });
+    state.sessao = await entrar({ perfil: state.perfilLogin, nome, pin, lembrarNesteAparelho });
     state.statusError = null;
     logoutButton.classList.remove('hidden');
     const pending = await quantidadePendente();
@@ -437,6 +615,48 @@ async function tratarAlteracaoPin(form) {
   } finally { setBusy(false); }
 }
 
+async function gerarECompartilharRelatorioPDF() {
+  if (!navigator.onLine) throw new Error('Conecte-se à internet para gerar o relatório atualizado.');
+  const campoData = document.getElementById('report-date');
+  const data = campoData?.value || state.status?.data;
+  if (!data || !/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new Error('Selecione uma data válida para o relatório.');
+
+  setBusy(true);
+  try {
+    const relatorio = await consultarRelatorioGestao(state.sessao.token, data);
+    const arquivo = await criarRelatorioPDF(relatorio);
+    const nome = arquivo.filename;
+    const file = new File([arquivo.blob], nome, { type: 'application/pdf' });
+
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: 'Relatório da Cantina da Escola',
+          text: `Relatório financeiro de ${data.split('-').reverse().join('/')}.`
+        });
+        mostrarToast('Relatório pronto para compartilhar.', 'success');
+        return;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        console.warn('Compartilhamento nativo indisponível:', error);
+      }
+    }
+
+    const url = URL.createObjectURL(arquivo.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = nome;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    mostrarToast('PDF gerado e baixado. Você pode compartilhá-lo pelo aparelho.', 'success');
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function executarLogout() {
   const pendentes = await quantidadePendente().catch(() => 0);
   if (pendentes > 0) {
@@ -473,6 +693,10 @@ root.addEventListener('click', async (event) => {
   try {
     if (action === 'logout') {
       await executarLogout();
+    } else if (action === 'share-app') {
+      await mostrarModalCompartilharApp();
+    } else if (action === 'report-pdf') {
+      await gerarECompartilharRelatorioPDF();
     } else if (action === 'sale-pix' || action === 'sale-cash' || action === 'entry' || action === 'exit') {
       mostrarFormularioOperacao(action);
     } else if (action === 'cancel-operation') {
@@ -511,11 +735,24 @@ root.addEventListener('submit', async (event) => {
 logoutButton.addEventListener('click', executarLogout);
 
 installButton.addEventListener('click', async () => {
+  if (podeMostrarAjudaIOS()) {
+    mostrarAjudaInstalacao();
+    return;
+  }
   const installed = await instalarAplicativo();
   if (installed) mostrarToast('Aplicativo instalado.', 'success');
+  atualizarBotaoInstalacao();
 });
 
-document.addEventListener('cantina:instalavel', () => installButton.classList.remove('hidden'));
+document.addEventListener('cantina:instalavel', atualizarBotaoInstalacao);
+document.addEventListener('cantina:instalacao-atualizada', atualizarBotaoInstalacao);
+document.addEventListener('cantina:instalado', atualizarBotaoInstalacao);
+appDialog.addEventListener('click', (event) => {
+  if (event.target.closest('[data-dialog-close]')) fecharDialogo();
+});
+appDialog.addEventListener('click', (event) => {
+  if (event.target === appDialog) fecharDialogo();
+});
 
 window.addEventListener('online', async () => {
   definirConexao();
@@ -527,37 +764,50 @@ window.addEventListener('offline', async () => {
 });
 
 async function iniciar() {
-  document.getElementById('year').textContent = new Date().getFullYear();
-  definirConexao();
+  const splash = document.getElementById('splash-screen');
+  const splashMinimo = new Promise((resolve) => window.setTimeout(() => {
+    splash?.classList.add('is-hidden');
+    window.setTimeout(() => splash?.remove(), 380);
+    resolve();
+  }, 1800));
+  try {
+    document.getElementById('year').textContent = new Date().getFullYear();
+    definirConexao();
+    atualizarBotaoInstalacao();
 
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    try { await navigator.serviceWorker.register('./sw.js'); }
-    catch (error) { console.warn('Service Worker não foi registrado:', error); }
-  }
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      try { await navigator.serviceWorker.register('./sw.js'); }
+      catch (error) { console.warn('Service Worker não foi registrado:', error); }
+    }
 
-  state.sessao = sessaoAtual();
-  if (!state.sessao) {
-    renderLogin();
-    return;
-  }
+    state.sessao = sessaoAtual();
+    if (!state.sessao) {
+      renderLogin();
+      return;
+    }
 
-  logoutButton.classList.remove('hidden');
-  state.status = obterStatusCache();
-  if (!navigator.onLine && !state.status) {
-    root.innerHTML = '<section class="panel"><div class="notice warning"><div><strong>Sem conexão e sem dados do caixa neste aparelho</strong>Conecte-se à internet para carregar o caixa compartilhado pela primeira vez.</div></div><div class="form-actions"><button class="button button-outline" id="retry-status" type="button">Tentar novamente</button><button class="button button-outline" type="button" data-action="logout">Sair e voltar ao login</button></div></section>';
-    document.getElementById('retry-status').addEventListener('click', () => atualizarStatus());
-    return;
-  }
+    logoutButton.classList.remove('hidden');
+    state.status = obterStatusCache();
+    if (state.status) {
+      await renderDashboard();
+    }
+    if (!navigator.onLine && !state.status) {
+      root.innerHTML = '<section class="panel"><div class="notice warning"><div><strong>Sem conexão e sem dados do caixa neste aparelho</strong>Conecte-se à internet para carregar o caixa compartilhado pela primeira vez.</div></div><div class="form-actions"><button class="button button-outline" id="retry-status" type="button">Tentar novamente</button><button class="button button-outline" type="button" data-action="logout">Sair e voltar ao login</button></div></section>';
+      document.getElementById('retry-status').addEventListener('click', () => atualizarStatus());
+      return;
+    }
 
-  if (navigator.onLine) {
-    await atualizarStatus({ silencioso: true });
-    const pendentes = await quantidadePendente();
-    if (pendentes) await sincronizarEAtualizar();
-  } else {
-    await renderDashboard();
+    if (navigator.onLine) {
+      await atualizarStatus({ silencioso: true });
+      const pendentes = await quantidadePendente();
+      if (pendentes) await sincronizarEAtualizar();
+    } else {
+      await renderDashboard();
+    }
+  } finally {
+    await splashMinimo;
   }
 }
-
 iniciar().catch((error) => {
   console.error(error);
   renderLogin(error.message || 'Não foi possível iniciar o aplicativo.');

@@ -1,7 +1,7 @@
 import { apiRequest } from './api.js';
 import { salvarSessao, obterSessao, limparSessao } from './storage.js';
 
-export async function entrar({ perfil, nome, pin }) {
+export async function entrar({ perfil, nome, pin, lembrarNesteAparelho = false }) {
   const dados = await apiRequest({
     acao: 'login',
     perfil,
@@ -17,7 +17,7 @@ export async function entrar({ perfil, nome, pin }) {
     salvoEm: Date.now()
   };
 
-  salvarSessao(sessao);
+  salvarSessao(sessao, lembrarNesteAparelho);
   return sessao;
 }
 

@@ -65,16 +65,32 @@ export async function removerDaFila(idRequisicao) {
 
 export function obterSessao() {
   try {
-    return JSON.parse(localStorage.getItem('cantina_sessao') || 'null');
+    const salvo = localStorage.getItem('cantina_sessao');
+    const temporario = sessionStorage.getItem('cantina_sessao');
+    return JSON.parse(salvo || temporario || 'null');
   } catch {
     return null;
   }
 }
 
-export function salvarSessao(sessao) {
-  localStorage.setItem('cantina_sessao', JSON.stringify(sessao));
+export function prefereLembrarLogin() {
+  return localStorage.getItem('cantina_lembrar_login') === '1';
+}
+
+export function salvarSessao(sessao, lembrarNesteAparelho = false) {
+  const valor = JSON.stringify(sessao);
+  localStorage.removeItem('cantina_sessao');
+  sessionStorage.removeItem('cantina_sessao');
+  localStorage.setItem('cantina_lembrar_login', lembrarNesteAparelho ? '1' : '0');
+  if (lembrarNesteAparelho) {
+    localStorage.setItem('cantina_sessao', valor);
+  } else {
+    sessionStorage.setItem('cantina_sessao', valor);
+  }
 }
 
 export function limparSessao() {
   localStorage.removeItem('cantina_sessao');
+  sessionStorage.removeItem('cantina_sessao');
 }
+
