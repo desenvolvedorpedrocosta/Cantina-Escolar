@@ -72,7 +72,6 @@ function renderLogin(message = '') {
   root.innerHTML = `
     <section class="login-wrap">
       <div class="login-card">
-        <p class="eyebrow">Acesso compartilhado</p>
         <h1>Bem-vindo à cantina</h1>
         <p class="subtle">Entre para registrar as movimentações e acompanhar o caixa do dia.</p>
         ${message ? `<div class="notice warning" style="margin-top:16px">${escapeHtml(message)}</div>` : ''}
@@ -188,8 +187,6 @@ async function renderDashboard() {
       <div id="admin-form-slot"></div>
       ${pendentes ? '<p class="subtle" style="margin:12px 0 0">O fechamento ficará disponível depois que todas as movimentações forem sincronizadas.</p>' : ''}
     </section>`;
-  } else if (sessao.perfil !== 'ADMIN') {
-    adminPanel = `<section class="panel"><div class="notice"><div><strong>Acesso da operadora</strong>O resumo financeiro completo e o fechamento estão disponíveis no acesso da gestão.</div></div></section>`;
   }
 
   const movements = status?.movimentacoes || [];
