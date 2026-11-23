@@ -1,14 +1,51 @@
-let eventoInstalacao = null;
+const CHAVE_ESTADO = '__CANTINA_PWA_INSTALL_BRIDGE__';
+
+// O script clássico install-bridge.js cria este estado no <head>, antes dos módulos.
+// O fallback mantém compatibilidade caso o script clássico não esteja disponível.
+const estadoInstalacao = window[CHAVE_ESTADO] || (window[CHAVE_ESTADO] = {
+  evento: null,
+  instalado: false,
+  capturadoEm: 0,
+  inicializado: false
+});
 
 function emitirAtualizacao(nome) {
   document.dispatchEvent(new CustomEvent(nome));
 }
 
+function capturarEventoInstalacao(event) {
+  if (estaInstalado()) return;
+  if (typeof event.preventDefault === 'function') event.preventDefault();
+  estadoInstalacao.evento = event;
+  estadoInstalacao.capturadoEm = Date.now();
+  emitirAtualizacao('cantina:instalavel');
+}
+
+// Fallback: não duplica o listener quando o bridge antecipado já foi carregado.
+if (!estadoInstalacao.inicializado) {
+  estadoInstalacao.inicializado = true;
+  window.addEventListener('beforeinstallprompt', capturarEventoInstalacao, true);
+  window.addEventListener('appinstalled', () => {
+    estadoInstalacao.evento = null;
+    estadoInstalacao.instalado = true;
+    emitirAtualizacao('cantina:instalado');
+    emitirAtualizacao('cantina:instalacao-atualizada');
+  });
+}
+
 export function estaInstalado() {
-  const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches;
-  const fullscreen = window.matchMedia?.('(display-mode: fullscreen)')?.matches;
-  const iosStandalone = window.navigator.standalone === true;
-  return Boolean(standalone || fullscreen || iosStandalone);
+  let standalone = false;
+  let fullscreen = false;
+
+  try {
+    standalone = Boolean(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    fullscreen = Boolean(window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches);
+  } catch (_) {
+    // Alguns navegadores antigos não oferecem matchMedia completo.
+  }
+
+  const iosStandalone = window.navigator && window.navigator.standalone === true;
+  return Boolean(standalone || fullscreen || iosStandalone || estadoInstalacao.instalado);
 }
 
 export function ehIOS() {
@@ -23,14 +60,13 @@ export function ehSafariIOS() {
 }
 
 /**
- * Detecção informativa de navegadores Chromium.
- * A captura do beforeinstallprompt NÃO depende deste teste:
- * Chrome, Edge, Brave e outros Chromium são tratados igualmente.
+ * Detecção apenas informativa. A captura do beforeinstallprompt não depende
+ * do nome do navegador nem do userAgent.
  */
 export function ehChromium() {
   const brands = navigator.userAgentData?.brands || [];
   const informadoPelasBrands = brands.some(({ brand }) =>
-    /Chromium|Google Chrome|Microsoft Edge|Opera/i.test(String(brand || ''))
+    /Chromium|Google Chrome|Microsoft Edge|Opera|Brave/i.test(String(brand || ''))
   );
   const ua = navigator.userAgent || '';
   const informadoPeloUA = /(?:Chrome|Chromium|Edg|Edge|OPR|Brave)\//i.test(ua);
@@ -40,58 +76,47 @@ export function ehChromium() {
 export function tipoInstalacao() {
   if (estaInstalado()) return 'instalado';
   if (ehIOS()) return 'ios';
-  if (eventoInstalacao) return 'nativo';
+  if (podeInstalar()) return 'nativo';
   if (ehChromium()) return 'chromium-manual';
-  // Sempre oferecemos uma orientação manual quando ainda não há prompt nativo.
   return 'manual';
 }
 
-/**
- * Captura o evento em fase de captura e sem qualquer filtro por Chrome.
- * preventDefault aqui apenas guarda o prompt para exibi-lo após o toque
- * explícito no botão do aplicativo; não bloqueia o clique do usuário.
- */
-window.addEventListener('beforeinstallprompt', (event) => {
-  if (estaInstalado()) return;
-  event.preventDefault();
-  eventoInstalacao = event;
-  emitirAtualizacao('cantina:instalavel');
-}, true);
-
-window.addEventListener('appinstalled', () => {
-  eventoInstalacao = null;
-  emitirAtualizacao('cantina:instalado');
-});
-
-// Atualiza a interface se o navegador mudar para o modo standalone.
-try {
-  const mediaStandalone = window.matchMedia('(display-mode: standalone)');
-  const atualizarModo = () => emitirAtualizacao('cantina:instalacao-atualizada');
-  if (mediaStandalone.addEventListener) mediaStandalone.addEventListener('change', atualizarModo);
-  else if (mediaStandalone.addListener) mediaStandalone.addListener(atualizarModo);
-} catch (_) {
-  // Alguns navegadores antigos não oferecem matchMedia compatível.
-}
-
 export async function instalarAplicativo() {
-  if (!eventoInstalacao || estaInstalado()) return false;
+  if (estaInstalado()) return false;
 
-  const evento = eventoInstalacao;
-  eventoInstalacao = null; // beforeinstallprompt só pode ser utilizado uma vez.
+  const evento = estadoInstalacao.evento;
+  if (!evento || typeof evento.prompt !== 'function') return false;
+
+  // O navegador permite usar cada evento de instalação uma única vez.
+  // Limpamos antes da chamada para bloquear duplo clique/reutilização.
+  estadoInstalacao.evento = null;
 
   try {
-    await evento.prompt();
-    const escolha = await evento.userChoice;
-    emitirAtualizacao('cantina:instalacao-atualizada');
+    // prompt() é chamado diretamente a partir do clique do usuário.
+    const respostaPrompt = await evento.prompt();
+    let escolha = respostaPrompt;
+
+    // Compatibilidade com implementações que retornam o resultado por userChoice.
+    if (!escolha || !escolha.outcome) {
+      try {
+        escolha = await evento.userChoice;
+      } catch (_) {
+        escolha = respostaPrompt;
+      }
+    }
+
+    if (escolha?.outcome === 'accepted') {
+      estadoInstalacao.instalado = true;
+    }
+
     return escolha?.outcome === 'accepted';
-  } catch (error) {
+  } finally {
     emitirAtualizacao('cantina:instalacao-atualizada');
-    throw error;
   }
 }
 
 export function podeInstalar() {
-  return !estaInstalado() && Boolean(eventoInstalacao);
+  return !estaInstalado() && Boolean(estadoInstalacao.evento && typeof estadoInstalacao.evento.prompt === 'function');
 }
 
 export function podeMostrarAjudaIOS() {
