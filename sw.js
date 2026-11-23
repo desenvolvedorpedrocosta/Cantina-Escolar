@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cantina-da-escola-shell-v7';
+const CACHE_NAME = 'cantina-da-escola-shell-v8';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const SHELL_FILES = [
   './js/storage.js',
   './js/auth.js',
   './js/offline.js',
+  './js/install-bridge.js',
   './js/install.js',
   './js/cash.js',
   './js/admin.js',
