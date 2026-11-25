@@ -404,3 +404,15 @@ body { overflow-x: hidden; }
   .pdf-action-buttons { display: grid; grid-template-columns: 1fr; }
   .pdf-action-buttons .button { width: 100%; }
 }
+
+
+/* Campo de PIN com controle acessível para mostrar/ocultar os números. */
+.password-control { position: relative; display: flex; align-items: center; width: 100%; }
+.password-control .pin-input { width: 100%; padding-right: 54px; }
+.password-toggle { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 40px; height: 38px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; }
+.password-toggle:hover { color: var(--navy); background: #edf3f6; }
+.password-toggle:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.password-toggle svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.password-toggle .eye-off { display: none; }
+.password-toggle[aria-pressed="true"] .eye-on { display: none; }
+.password-toggle[aria-pressed="true"] .eye-off { display: block; }
