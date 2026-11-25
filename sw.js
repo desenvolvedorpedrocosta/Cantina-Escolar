@@ -1,4 +1,7 @@
-const CACHE_NAME = 'cantina-da-escola-shell-v11';
+/* CANTINA DA ESCOLA — SERVICE WORKER */
+const CACHE_PREFIX = 'cantina-da-escola-shell-';
+const CACHE_NAME = CACHE_PREFIX + 'v12';
+
 const SHELL_FILES = [
   './',
   './index.html',
@@ -22,51 +25,78 @@ const SHELL_FILES = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(SHELL_FILES))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+
+    // Um único recurso ausente não deve impedir a atualização do Service Worker.
+    const resultados = await Promise.allSettled(
+      SHELL_FILES.map((arquivo) => cache.add(new Request(arquivo, { cache: 'reload' })))
+    );
+
+    const falhas = resultados
+      .map((resultado, indice) => resultado.status === 'rejected' ? SHELL_FILES[indice] : null)
+      .filter(Boolean);
+
+    if (falhas.length) {
+      console.warn('Cantina da Escola: alguns recursos não entraram no cache:', falhas);
+    }
+
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) => Promise.all(
-      keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
-    )).then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    const chaves = await caches.keys();
+    await Promise.all(
+      chaves
+        .filter((chave) => chave.startsWith(CACHE_PREFIX) && chave !== CACHE_NAME)
+        .map((chave) => caches.delete(chave))
+    );
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
+  if (request.method !== 'GET') return;
+
   const url = new URL(request.url);
 
-  // Nunca armazenar chamadas da API nem respostas financeiras em cache.
-  if (url.hostname === 'script.google.com' || url.hostname.endsWith('.googleusercontent.com')) {
-    return;
-  }
+  // A API financeira nunca é armazenada no cache do PWA.
+  if (
+    url.hostname === 'script.google.com' ||
+    url.hostname === 'script.googleusercontent.com' ||
+    url.hostname.endsWith('.googleusercontent.com')
+  ) return;
 
-  if (request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    fetch(request).then((response) => {
-      if (response && response.ok) {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+  event.respondWith((async () => {
+    try {
+      const resposta = await fetch(request);
+      if (resposta && resposta.ok) {
+        const copia = resposta.clone();
+        caches.open(CACHE_NAME)
+          .then((cache) => cache.put(request, copia))
+          .catch((erro) => console.warn('Não foi possível atualizar o cache da Cantina:', erro));
       }
-      return response;
-    }).catch(async () => {
-      const cached = await caches.match(request);
-      if (cached) return cached;
+      return resposta;
+    } catch (erroRede) {
+      const armazenada = await caches.match(request, { ignoreSearch: true });
+      if (armazenada) return armazenada;
+
       if (request.mode === 'navigate') {
-        return caches.match('./index.html');
+        const inicio = await caches.match('./index.html');
+        if (inicio) return inicio;
       }
+
       return new Response('Recurso indisponível offline.', {
         status: 503,
         headers: { 'Content-Type': 'text/plain; charset=utf-8' }
       });
-    })
-  );
+    }
+  })());
 });
 
 self.addEventListener('sync', (event) => {

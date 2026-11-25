@@ -28,6 +28,40 @@
     </div>
   </div>
 
+  <!-- Proteção independente dos módulos: libera a splash mesmo se um import falhar. -->
+  <script>
+    (function () {
+      'use strict';
+      var liberada = false;
+
+      function liberarSplash() {
+        if (liberada) return;
+        var splash = document.getElementById('splash-screen');
+        if (!splash) return;
+        liberada = true;
+        splash.classList.add('is-hidden');
+        window.setTimeout(function () {
+          if (splash.isConnected) splash.remove();
+        }, 420);
+      }
+
+      window.__CANTINA_LIBERAR_SPLASH__ = liberarSplash;
+
+      // Se o app não informar que iniciou, substitui a tela de carregamento
+      // por uma orientação recuperável em vez de manter a splash indefinidamente.
+      window.setTimeout(function () {
+        if (document.documentElement.dataset.cantinaBooted === '1') return;
+        liberarSplash();
+        var root = document.getElementById('app-root');
+        if (root && root.querySelector('.loading-state')) {
+          root.innerHTML = '<section class="panel" style="padding:24px"><p class="eyebrow">Cantina da Escola</p><h1>Não foi possível iniciar o aplicativo</h1><p class="subtle">A tela de abertura foi liberada, mas algum arquivo do aplicativo não carregou. Confira se a pasta <strong>js</strong> foi publicada completa, especialmente <strong>js/config.js</strong>, e tente novamente.</p><button class="button button-primary" id="startup-retry" type="button">Recarregar aplicativo</button></section>';
+          var retry = document.getElementById('startup-retry');
+          if (retry) retry.addEventListener('click', function () { window.location.reload(); });
+        }
+      }, 6500);
+    })();
+  </script>
+
   <div class="app-shell">
     <header class="topbar">
       <a class="brand" href="./" aria-label="Cantina da Escola - início">
