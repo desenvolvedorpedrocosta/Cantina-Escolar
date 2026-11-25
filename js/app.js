@@ -1140,25 +1140,52 @@ async function tratarMovimentacao(form) {
 }
 
 async function tratarFechamento(form) {
-  if (!navigator.onLine) throw new Error('O fechamento exige conexão com a internet.');
+  if (!navigator.onLine) {
+    throw new Error('O fechamento exige conexão com a internet.');
+  }
+
+  const formData = new FormData(form);
+  const textoContado = String(formData.get('contado') ?? '').trim();
+
+  // Não permite que campo vazio seja interpretado como zero.
+  if (!textoContado || !/\d/.test(textoContado)) {
+    throw new Error('Informe o dinheiro contado na gaveta. Digite 0,00 somente se realmente não houver dinheiro.');
+  }
+
+  const contado = parseMoneyToCents(textoContado);
+
+  if (!Number.isSafeInteger(contado) || contado < 0) {
+    throw new Error('Informe o dinheiro contado corretamente.');
+  }
+
   setBusy(true);
+
   try {
     const sync = await sincronizarFila();
+
     if (sync.pendentes > 0) {
-      throw new Error(`Ainda existem ${sync.pendentes} movimentação(ões) pendente(s). Resolva a sincronização antes do fechamento.`);
+      throw new Error(
+        `Ainda existem ${sync.pendentes} movimentação(ões) pendente(s). Resolva a sincronização antes do fechamento.`
+      );
     }
-    const formData = new FormData(form);
-    const contado = parseMoneyToCents(formData.get('contado'));
-    if (!Number.isSafeInteger(contado)) throw new Error('Informe o dinheiro contado corretamente.');
+
     const resultado = await fecharCaixa({
       token: state.sessao.token,
       dinheiroContadoCentavos: contado,
       confirmouSincronizacao: true,
       observacao: String(formData.get('observacao') || '').trim()
     });
-    mostrarToast(`Caixa fechado: ${resultado.status}. Diferença: ${formatarMoeda(resultado.diferenca)}.`, resultado.status === 'CONFERIDO' ? 'success' : '');
+
+    mostrarToast(
+      `Caixa fechado: ${resultado.status}. Diferença: ${formatarMoeda(resultado.diferenca)}.`,
+      resultado.status === 'CONFERIDO' ? 'success' : ''
+    );
+
     await atualizarStatus({ silencioso: true });
-  } finally { setBusy(false); }
+
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function tratarAlteracaoPin(form) {
