@@ -2,17 +2,26 @@ import { apiRequest } from './api.js';
 import { enviarMovimentacao } from './offline.js';
 
 export function parseMoneyToCents(value) {
-  const normalized = String(value ?? '')
-    .trim()
+  const texto = String(value ?? '').trim();
+
+  // Campo vazio não pode ser interpretado como R$ 0,00.
+  if (!texto) return NaN;
+
+  const normalized = texto
     .replace(/\s/g, '')
     .replace(/^R\$/i, '')
     .replace(/\./g, '')
     .replace(',', '.');
+
+  // Também rejeita conteúdos como "R$" sem valor numérico.
+  if (!normalized) return NaN;
+
   const number = Number(normalized);
+
   if (!Number.isFinite(number) || number < 0) return NaN;
+
   return Math.round(number * 100);
 }
-
 export async function abrirCaixa(token, valorCentavos) {
   return apiRequest({
     acao: 'abrirCaixa',
