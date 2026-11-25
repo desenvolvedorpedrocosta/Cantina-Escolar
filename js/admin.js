@@ -30,3 +30,7 @@ export function alterarPin({ token, tipo, novoPin }) {
 export function consultarRelatorioGestao(token, data) {
   return apiRequest({ acao: 'relatorioGestao', token, data });
 }
+
+export function consultarHistoricoFechamentos(token, inicio, fim) {
+  return apiRequest({ acao: 'historicoFechamentos', token, inicio, fim });
+}

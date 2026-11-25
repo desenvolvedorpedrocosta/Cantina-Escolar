@@ -356,3 +356,51 @@ body { overflow-x: hidden; }
   .install-help-description { font-size: 13px; }
   .install-help-steps li { padding: 11px; font-size: 12px; }
 }
+
+
+/* Histórico de fechamentos e relatórios administrativos */
+.history-panel { scroll-margin-top: 18px; }
+.history-filter { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; align-items: end; gap: 10px; margin: 14px 0 18px; }
+.history-filter .field { min-width: 0; }
+.history-summary { display: grid; gap: 12px; }
+.history-period-metrics { grid-template-columns: repeat(4, minmax(0,1fr)); }
+.history-status-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0 4px; }
+.closure-status { display: inline-flex; align-items: center; justify-content: center; padding: 5px 8px; border-radius: 999px; font-size: 10px; line-height: 1.2; font-weight: 800; letter-spacing: .02em; white-space: nowrap; }
+.closure-status.bateu, .closure-status.conferido { color: #126c5e; background: #e5f5ef; }
+.closure-status.sobra { color: #8a5b0a; background: #fff4d8; }
+.closure-status.falta { color: #a1323b; background: #fdebed; }
+.history-charts { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin: 18px 0; }
+.history-chart-card { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
+.history-chart-card h3 { margin: 0 0 4px; font-size: 14px; }
+.history-chart-card > .subtle { margin: 0 0 10px; font-size: 11px; }
+.history-chart-canvas { position: relative; height: 250px; min-width: 0; }
+.history-period-pdf { display: grid; gap: 10px; margin: 16px 0; }
+.history-list-title { margin: 20px 0 10px; }
+.history-table { min-width: 850px; }
+.history-table tr.is-selected { background: #eef7f5; }
+.history-table td:last-child, .history-table th:last-child { text-align: right; }
+.history-detail-panel { display: grid; gap: 12px; margin-top: 20px; padding: 15px; border: 1px solid #cfe4df; border-radius: 14px; background: #f8fcfb; scroll-margin-top: 16px; }
+.history-detail-panel h3, .history-detail-panel h4 { margin: 0; }
+.history-detail-metrics { grid-template-columns: repeat(4, minmax(0,1fr)); }
+.history-actions { min-width: 0; }
+.pdf-action-row { display: grid; gap: 6px; margin-top: 10px; }
+.pdf-ready-label { margin: 0; font-size: 11px; }
+.pdf-action-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.pdf-action-buttons .button { flex: 1 1 160px; }
+.chart-error { margin: 8px 0 0; color: #a1323b; }
+@media (max-width: 760px) {
+  .history-period-metrics, .history-detail-metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .history-charts { grid-template-columns: 1fr; }
+  .history-filter { grid-template-columns: 1fr 1fr; }
+  .history-filter .button { grid-column: 1 / -1; width: 100%; }
+  .history-chart-canvas { height: 220px; }
+}
+@media (max-width: 420px) {
+  .history-filter { grid-template-columns: 1fr; }
+  .history-filter .button { grid-column: auto; }
+  .history-detail-panel { padding: 11px; }
+  .history-detail-panel .panel-head { flex-direction: column; align-items: stretch; }
+  .history-detail-panel .panel-head .button { width: 100%; }
+  .pdf-action-buttons { display: grid; grid-template-columns: 1fr; }
+  .pdf-action-buttons .button { width: 100%; }
+}

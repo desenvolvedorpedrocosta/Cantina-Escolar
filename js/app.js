@@ -1,12 +1,12 @@
 import { entrar, sessaoAtual, sair } from './auth.js';
 import { abrirCaixa, registrarVenda, registrarAjuste, parseMoneyToCents } from './cash.js';
-import { consultarStatus, fecharCaixa, alterarPin, consultarRelatorioGestao } from './admin.js';
+import { consultarStatus, fecharCaixa, alterarPin, consultarRelatorioGestao, consultarHistoricoFechamentos } from './admin.js';
 import { formatarMoeda, formatarDataHora, formatarTipo } from './reports.js';
 import { sincronizarFila, quantidadePendente, detalhesFila } from './offline.js';
 import { obterSessao, prefereLembrarLogin } from './storage.js';
 import { urlConfigurada } from './api.js';
 import { instalarAplicativo, podeMostrarAjudaIOS, podeInstalar, ehChromium, tipoInstalacao, estaInstalado } from './install.js';
-import { criarRelatorioPDF } from './pdf-report.js';
+import { criarRelatorioPDF, criarRelatorioPeriodoPDF } from './pdf-report.js';
 
 const root = document.getElementById('app-root');
 const connection = document.getElementById('connection-status');
@@ -23,8 +23,19 @@ const state = {
   status: null,
   ultimaConsulta: null,
   busy: false,
-  statusError: null
+  statusError: null,
+  historico: null,
+  historicoInicio: '',
+  historicoFim: '',
+  fechamentoSelecionado: null,
+  relatorioFechamentoSelecionado: null,
+  pdfDiario: null,
+  pdfPeriodo: null,
+  pdfFechamento: null
 };
+
+let historicoCharts = [];
+let chartLibraryPromise = null;
 
 const STORAGE_STATUS = 'cantina_status_cache';
 
@@ -424,6 +435,380 @@ function renderAnalytics(indicadores = {}) {
   </section>`;
 }
 
+function dataISOlocal(data = new Date()) {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(data);
+  const valores = Object.fromEntries(partes.map((item) => [item.type, item.value]));
+  return `${valores.year}-${valores.month}-${valores.day}`;
+}
+
+function subtrairDiasISO(dataIso, quantidade) {
+  const [ano, mes, dia] = dataIso.split('-').map(Number);
+  const data = new Date(ano, mes - 1, dia, 12);
+  data.setDate(data.getDate() - quantidade);
+  return dataISOlocal(data);
+}
+
+function dataPtCurta(valor) {
+  const partes = String(valor || '').split('-');
+  return partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : String(valor || '—');
+}
+
+function statusFechamentoLabel(status) {
+  const valor = String(status || '').toUpperCase();
+  if (valor === 'CONFERIDO' || valor === 'BATEU') return 'BATEU';
+  if (valor === 'SOBRA') return 'SOBRA';
+  if (valor === 'FALTA') return 'FALTA';
+  return valor || '—';
+}
+
+function renderAcoesPDF(scope, texto = '') {
+  return `<div class="pdf-action-row">
+    ${texto ? `<p class="subtle pdf-ready-label">${escapeHtml(texto)}</p>` : ''}
+    <div class="form-actions pdf-action-buttons">
+      <button type="button" class="button button-primary" data-action="save-pdf" data-pdf-scope="${scope}">Salvar PDF</button>
+      <button type="button" class="button button-outline" data-action="share-pdf" data-pdf-scope="${scope}">Compartilhar PDF</button>
+    </div>
+  </div>`;
+}
+
+function renderHistoricoFechamentos() {
+  if (!state.historicoInicio || !state.historicoFim) {
+    const hoje = dataISOlocal();
+    state.historicoFim = hoje;
+    state.historicoInicio = subtrairDiasISO(hoje, 29);
+  }
+
+  const historico = state.historico;
+  let resultados = '<div class="empty-state">Escolha o período e toque em “Consultar fechamentos” para visualizar o histórico.</div>';
+
+  if (historico) {
+    const c = historico.consolidado || {};
+    const fechamentos = Array.isArray(historico.fechamentos) ? historico.fechamentos : [];
+    const linhas = fechamentos.length ? fechamentos.map((item) => `
+      <tr class="${state.fechamentoSelecionado?.id === item.id ? 'is-selected' : ''}">
+        <td>${dataPtCurta(item.data)}</td>
+        <td>${escapeHtml(item.responsavel || '—')}</td>
+        <td>${formatarMoeda(item.totalVendido)}</td>
+        <td>${formatarMoeda(item.saldoEsperado)}</td>
+        <td>${formatarMoeda(item.dinheiroContado)}</td>
+        <td>${formatarMoeda(item.diferenca)}</td>
+        <td><span class="closure-status ${String(item.statusExibicao || '').toLowerCase()}">${statusFechamentoLabel(item.statusExibicao || item.status)}</span></td>
+        <td><button type="button" class="button button-outline button-small" data-action="history-detail" data-close-id="${escapeHtml(item.id)}" data-close-date="${escapeHtml(item.data)}">Detalhar</button></td>
+      </tr>`).join('') : '<tr><td colspan="8"><div class="empty-state">Nenhum fechamento encontrado neste período.</div></td></tr>';
+
+    let detalhe = '';
+    if (state.fechamentoSelecionado && state.relatorioFechamentoSelecionado) {
+      const f = state.fechamentoSelecionado;
+      const rel = state.relatorioFechamentoSelecionado;
+      const resumo = rel.resumo || {};
+      const movimentoHtml = renderMovements(rel.movimentacoes || []);
+      detalhe = `<section class="history-detail-panel" id="history-selected-detail">
+        <div class="panel-head"><div><p class="eyebrow">Fechamento selecionado</p><h3>${dataPtCurta(f.data)} · ${statusFechamentoLabel(f.statusExibicao || f.status)}</h3><p class="subtle">Responsável: ${escapeHtml(f.responsavel || '—')}</p></div><button type="button" class="button button-quiet button-small" data-action="history-clear-detail">Fechar detalhe</button></div>
+        <div class="metric-grid history-detail-metrics">
+          ${metric('Total vendido', resumo.totalVendido)}
+          ${metric('Dinheiro', resumo.dinheiro)}
+          ${metric('Pix', resumo.pix)}
+          ${metric('Entradas', resumo.entradas)}
+          ${metric('Saídas', resumo.saidas)}
+          ${metric('Saldo esperado', resumo.saldoEsperado, true)}
+          ${metric('Dinheiro contado', f.dinheiroContado)}
+          ${metric('Diferença', f.diferenca)}
+        </div>
+        <div class="history-actions">${state.pdfFechamento ? renderAcoesPDF('closure', `PDF do fechamento de ${dataPtCurta(f.data)} pronto.`) : '<p class="subtle">Preparando o PDF deste fechamento…</p>'}</div>
+        <h4>Movimentações do dia</h4>${movimentoHtml}
+      </section>`;
+    }
+
+    resultados = `<div class="history-summary">
+        <div class="metric-grid history-period-metrics">
+          ${metric('Total vendido no período', c.totalVendido, true)}
+          ${metric('Dinheiro', c.dinheiro)}
+          ${metric('Pix', c.pix)}
+          ${metric('Entradas/suprimentos', c.entradas)}
+          ${metric('Saídas/sangrias', c.saidas)}
+          ${metric('Saldo esperado nos fechamentos', c.saldoEsperado)}
+          ${metric('Dinheiro contado', c.dinheiroContado)}
+          ${metric('Diferença acumulada', c.diferenca)}
+        </div>
+        <div class="history-status-counts">
+          <span class="closure-status bateu">BATEU: ${Number(c.bateu || 0)}</span>
+          <span class="closure-status sobra">SOBRA: ${Number(c.sobras || 0)}</span>
+          <span class="closure-status falta">FALTA: ${Number(c.faltas || 0)}</span>
+          <span class="subtle">${Number(c.quantidadeFechamentos || 0)} fechamento(s)</span>
+        </div>
+      </div>
+      <div class="history-charts">
+        <section class="history-chart-card"><h3>Evolução diária das vendas</h3><p class="subtle">Comparação entre dinheiro e Pix.</p><div class="history-chart-canvas"><canvas id="history-sales-chart" aria-label="Gráfico de vendas por dia, dinheiro e Pix"></canvas></div></section>
+        <section class="history-chart-card"><h3>Saldo esperado x dinheiro contado</h3><p class="subtle">Comparação nos dias em que houve fechamento.</p><div class="history-chart-canvas"><canvas id="history-closing-chart" aria-label="Gráfico de saldo esperado e dinheiro contado nos fechamentos"></canvas></div></section>
+      </div>
+      <div class="history-period-pdf">
+        <button type="button" class="button button-primary" data-action="prepare-period-pdf" ${!navigator.onLine ? 'disabled' : ''}>Preparar PDF consolidado do período</button>
+        <div id="history-period-pdf-actions">${state.pdfPeriodo ? renderAcoesPDF('period', 'PDF consolidado do período pronto.') : ''}</div>
+      </div>
+      <h3 class="history-list-title">Fechamentos encontrados</h3>
+      <div class="table-wrap"><table class="movements history-table"><thead><tr><th>Data</th><th>Responsável</th><th>Vendido</th><th>Esperado</th><th>Contado</th><th>Diferença</th><th>Status</th><th></th></tr></thead><tbody>${linhas}</tbody></table></div>
+      ${detalhe}`;
+  }
+
+  return `<section class="panel history-panel" id="history-panel">
+    <div class="panel-head"><div><p class="eyebrow">Gestão · histórico</p><h2>Histórico de fechamentos</h2><p class="subtle">Consulte fechamentos anteriores, compare resultados e gere relatórios.</p></div></div>
+    <div class="history-filter">
+      <div class="field"><label for="history-start">Data inicial</label><input id="history-start" type="date" value="${escapeHtml(state.historicoInicio)}" max="${escapeHtml(dataISOlocal())}"></div>
+      <div class="field"><label for="history-end">Data final</label><input id="history-end" type="date" value="${escapeHtml(state.historicoFim)}" max="${escapeHtml(dataISOlocal())}"></div>
+      <button type="button" class="button button-dark" data-action="history-search" ${!navigator.onLine ? 'disabled' : ''}>Consultar fechamentos</button>
+    </div>
+    <div id="history-results">${resultados}</div>
+  </section>`;
+}
+
+function destruirGraficosHistorico() {
+  historicoCharts.forEach((chart) => {
+    try { chart.destroy(); } catch (_) {}
+  });
+  historicoCharts = [];
+}
+
+function garantirChartJs() {
+  if (window.Chart) return Promise.resolve(window.Chart);
+  if (!chartLibraryPromise) {
+    chartLibraryPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.6.2/dist/chart.umd.min.js';
+      script.async = true;
+      script.onload = () => window.Chart ? resolve(window.Chart) : reject(new Error('A biblioteca dos gráficos não ficou disponível.'));
+      script.onerror = () => reject(new Error('Não foi possível carregar os gráficos. Verifique a conexão.'));
+      document.head.appendChild(script);
+    }).catch((error) => {
+      chartLibraryPromise = null;
+      throw error;
+    });
+  }
+  return chartLibraryPromise;
+}
+
+async function montarGraficosHistorico(historico) {
+  if (!historico) return;
+  const canvasVendas = document.getElementById('history-sales-chart');
+  const canvasFechamentos = document.getElementById('history-closing-chart');
+  if (!canvasVendas || !canvasFechamentos) return;
+
+  const referencia = historico;
+  try {
+    const Chart = await garantirChartJs();
+    if (state.historico !== referencia || !canvasVendas.isConnected || !canvasFechamentos.isConnected) return;
+    destruirGraficosHistorico();
+
+    const dias = Array.isArray(historico.dias) ? historico.dias : [];
+    const fechamentos = (historico.fechamentos || []).slice().sort((a, b) => a.data.localeCompare(b.data));
+    const labels = dias.map((dia) => dataPtCurta(dia.data));
+    const moedaTooltip = (valor) => formatarMoeda(valor);
+
+    historicoCharts.push(new Chart(canvasVendas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Dinheiro', data: dias.map((dia) => Number(dia.dinheiro || 0)), backgroundColor: '#168b79', borderRadius: 4 },
+          { label: 'Pix', data: dias.map((dia) => Number(dia.pix || 0)), backgroundColor: '#4b83c3', borderRadius: 4 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${moedaTooltip(ctx.parsed.y)}` } } },
+        scales: { x: { stacked: true, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } }, y: { stacked: true, beginAtZero: true, ticks: { callback: (value) => moedaTooltip(value) } } }
+      }
+    }));
+
+    historicoCharts.push(new Chart(canvasFechamentos, {
+      type: 'line',
+      data: {
+        labels: fechamentos.map((item) => dataPtCurta(item.data)),
+        datasets: [
+          { label: 'Saldo esperado', data: fechamentos.map((item) => Number(item.saldoEsperado || 0)), borderColor: '#168b79', backgroundColor: 'rgba(22,139,121,.12)', tension: .25, fill: false },
+          { label: 'Dinheiro contado', data: fechamentos.map((item) => Number(item.dinheiroContado || 0)), borderColor: '#4b83c3', backgroundColor: 'rgba(75,131,195,.12)', tension: .25, fill: false }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${moedaTooltip(ctx.parsed.y)}` } } },
+        scales: { x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } }, y: { beginAtZero: true, ticks: { callback: (value) => moedaTooltip(value) } } }
+      }
+    }));
+  } catch (error) {
+    const host = canvasVendas?.closest('.history-chart-card');
+    if (host) {
+      const notice = document.createElement('p');
+      notice.className = 'subtle chart-error';
+      notice.textContent = error.message;
+      host.appendChild(notice);
+    }
+  }
+}
+
+function obterPDFPreparado(scope) {
+  if (scope === 'daily') return state.pdfDiario;
+  if (scope === 'period') return state.pdfPeriodo;
+  if (scope === 'closure') return state.pdfFechamento;
+  return null;
+}
+
+function baixarPDF(blob, nome) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = nome;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+async function salvarPDFPreparado(scope) {
+  const arquivo = obterPDFPreparado(scope);
+  if (!arquivo?.blob) throw new Error('Prepare o PDF antes de salvá-lo.');
+
+  // O seletor é aberto imediatamente no gesto de clique, antes de qualquer await.
+  let seletor = null;
+  if (window.isSecureContext && typeof window.showSaveFilePicker === 'function') {
+    try {
+      seletor = window.showSaveFilePicker({
+        suggestedName: arquivo.filename,
+        types: [{ description: 'Documento PDF', accept: { 'application/pdf': ['.pdf'] } }],
+        excludeAcceptAllOption: true
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      console.warn('Seletor de arquivos indisponível; será usado o download padrão.', error);
+    }
+  }
+
+  if (!seletor) {
+    baixarPDF(arquivo.blob, arquivo.filename);
+    mostrarToast('PDF baixado. A pasta de destino segue a configuração de downloads do navegador.', 'success');
+    return;
+  }
+
+  try {
+    const handle = await seletor;
+    const gravador = await handle.createWritable();
+    await gravador.write(arquivo.blob);
+    await gravador.close();
+    mostrarToast('PDF salvo no local escolhido.', 'success');
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    console.warn('Não foi possível usar o seletor de destino; usando download padrão.', error);
+    baixarPDF(arquivo.blob, arquivo.filename);
+    mostrarToast('O navegador não permitiu escolher a pasta. O PDF foi baixado pelo método padrão.', 'success');
+  }
+}
+
+function compartilharPDFPreparado(scope) {
+  const arquivo = obterPDFPreparado(scope);
+  if (!arquivo?.blob) {
+    mostrarToast('Prepare o PDF antes de compartilhar.', 'error');
+    return;
+  }
+  const file = new File([arquivo.blob], arquivo.filename, { type: 'application/pdf' });
+
+  // navigator.share é chamado sem await anterior, preservando o gesto do usuário.
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      const promessa = navigator.share({ files: [file], title: 'Relatório da Cantina da Escola', text: 'Relatório financeiro da Cantina da Escola.' });
+      promessa.then(() => mostrarToast('PDF compartilhado.', 'success'))
+        .catch((error) => {
+          if (error?.name !== 'AbortError') {
+            console.warn('Compartilhamento cancelado ou indisponível:', error);
+            baixarPDF(arquivo.blob, arquivo.filename);
+            mostrarToast('Não foi possível compartilhar diretamente. O PDF foi baixado para compartilhamento manual.', 'success');
+          }
+        });
+      return;
+    } catch (error) {
+      console.warn('Compartilhamento nativo indisponível:', error);
+    }
+  }
+
+  baixarPDF(arquivo.blob, arquivo.filename);
+  mostrarToast('Este navegador não compartilha arquivos PDF diretamente. O arquivo foi baixado para você compartilhá-lo pelo aparelho.', 'success');
+}
+
+async function prepararRelatorioDiarioPDF() {
+  if (!navigator.onLine) throw new Error('Conecte-se à internet para buscar o relatório atualizado.');
+  const campoData = document.getElementById('report-date');
+  const data = campoData?.value || state.status?.data;
+  if (!data || !/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new Error('Selecione uma data válida para o relatório.');
+
+  setBusy(true);
+  try {
+    const relatorio = await consultarRelatorioGestao(state.sessao.token, data);
+    state.pdfDiario = { ...(await criarRelatorioPDF(relatorio)), data };
+    const host = document.getElementById('daily-pdf-actions');
+    if (host) host.innerHTML = renderAcoesPDF('daily', `Relatório diário de ${dataPtCurta(data)} pronto.`);
+    mostrarToast('Relatório diário preparado. Escolha salvar ou compartilhar.', 'success');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function consultarHistoricoPeriodo() {
+  if (!navigator.onLine) throw new Error('Conecte-se à internet para consultar os fechamentos.');
+  const inicio = document.getElementById('history-start')?.value || '';
+  const fim = document.getElementById('history-end')?.value || '';
+  if (!inicio || !fim) throw new Error('Informe as duas datas do período.');
+  if (inicio > fim) throw new Error('A data inicial não pode ser posterior à data final.');
+
+  setBusy(true);
+  try {
+    state.historicoInicio = inicio;
+    state.historicoFim = fim;
+    state.historico = await consultarHistoricoFechamentos(state.sessao.token, inicio, fim);
+    state.fechamentoSelecionado = null;
+    state.relatorioFechamentoSelecionado = null;
+    state.pdfPeriodo = null;
+    state.pdfFechamento = null;
+    await renderDashboard();
+    mostrarToast(`${state.historico.fechamentos?.length || 0} fechamento(s) encontrado(s).`, 'success');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function selecionarFechamentoHistorico(id, data) {
+  if (!navigator.onLine) throw new Error('Conecte-se à internet para carregar o detalhe do fechamento.');
+  const fechamento = (state.historico?.fechamentos || []).find((item) => item.id === id);
+  if (!fechamento) throw new Error('O fechamento selecionado não está mais na consulta.');
+
+  setBusy(true);
+  try {
+    const relatorio = await consultarRelatorioGestao(state.sessao.token, data);
+    state.fechamentoSelecionado = fechamento;
+    state.relatorioFechamentoSelecionado = relatorio;
+    state.pdfFechamento = await criarRelatorioPDF(relatorio);
+    await renderDashboard();
+    document.getElementById('history-selected-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function prepararPDFPeriodo() {
+  if (!state.historico) throw new Error('Consulte um período antes de preparar o PDF.');
+  setBusy(true);
+  try {
+    state.pdfPeriodo = await criarRelatorioPeriodoPDF(state.historico);
+    const host = document.getElementById('history-period-pdf-actions');
+    if (host) host.innerHTML = renderAcoesPDF('period', 'Relatório consolidado pronto.');
+    mostrarToast('Relatório consolidado preparado.', 'success');
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function renderDashboard() {
   const sessao = state.sessao;
   const status = state.status;
@@ -481,9 +866,10 @@ async function renderDashboard() {
       <div class="admin-tools"><button class="button button-dark" type="button" data-action="close-cash" ${status.fechado || !online || pendentes ? 'disabled' : ''}>Fechar caixa</button><button class="button button-outline" type="button" data-action="pin-tools">Alterar PINs</button></div>
       <div class="report-controls">
         <div class="field"><label for="report-date">Data do relatório</label><input id="report-date" type="date" value="${escapeHtml(dataRelatorio)}" max="${escapeHtml(dataRelatorio)}"></div>
-        <button class="button button-primary" type="button" data-action="report-pdf" ${!online ? 'disabled' : ''}>Gerar e compartilhar PDF</button>
+        <button class="button button-primary" type="button" data-action="report-pdf" ${!online ? 'disabled' : ''}>Preparar PDF diário</button>
       </div>
-      <p class="subtle" style="margin:9px 0 0">O relatório inclui o resumo e todas as movimentações confirmadas da data selecionada.</p>
+      <div id="daily-pdf-actions">${state.pdfDiario?.data === dataRelatorio ? renderAcoesPDF('daily', `Relatório diário de ${dataPtCurta(state.pdfDiario.data)} pronto.`) : ''}</div>
+      <p class="subtle" style="margin:9px 0 0">Depois de preparar, escolha “Salvar PDF” ou “Compartilhar PDF”.</p>
       <div id="admin-form-slot"></div>
       ${pendentes ? '<p class="subtle" style="margin:12px 0 0">O fechamento ficará disponível depois que todas as movimentações forem sincronizadas.</p>' : ''}
     </section>`;
@@ -493,6 +879,7 @@ async function renderDashboard() {
   const movements = status?.movimentacoes || [];
   const refreshTime = state.ultimaConsulta ? new Date(state.ultimaConsulta).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : '—';
 
+  destruirGraficosHistorico();
   root.innerHTML = `
     <div class="dashboard-head">
       <div><p class="eyebrow">Painel da cantina</p><h1>Olá, ${escapeHtml(sessao.nome.split(' ')[0])}!</h1><div class="dashboard-meta"><span>${escapeHtml(dataHojePt())}</span><span>Acesso: ${sessao.perfil === 'ADMIN' ? 'Gestão' : 'Operadora'}</span></div></div>
@@ -505,6 +892,7 @@ async function renderDashboard() {
     ${actionPanel}
     ${adminPanel}
     ${adminAnalytics}
+    ${sessao.perfil === 'ADMIN' ? renderHistoricoFechamentos() : ''}
     <section class="panel"><div class="panel-head"><div><p class="eyebrow">Registro compartilhado</p><h2>Movimentações de hoje</h2><p class="subtle">Últimos lançamentos confirmados no servidor.</p></div><button class="button button-outline button-small" type="button" data-action="refresh">Atualizar</button></div>
       ${renderMovements(movements)}
     </section>
@@ -512,6 +900,7 @@ async function renderDashboard() {
 
   logoutButton.classList.remove('hidden');
   atualizarBotaoInstalacao();
+  if (sessao.perfil === 'ADMIN' && state.historico) montarGraficosHistorico(state.historico);
 }
 
 async function atualizarStatus({ silencioso = false } = {}) {
@@ -740,48 +1129,6 @@ async function tratarAlteracaoPin(form) {
   } finally { setBusy(false); }
 }
 
-async function gerarECompartilharRelatorioPDF() {
-  if (!navigator.onLine) throw new Error('Conecte-se à internet para gerar o relatório atualizado.');
-  const campoData = document.getElementById('report-date');
-  const data = campoData?.value || state.status?.data;
-  if (!data || !/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new Error('Selecione uma data válida para o relatório.');
-
-  setBusy(true);
-  try {
-    const relatorio = await consultarRelatorioGestao(state.sessao.token, data);
-    const arquivo = await criarRelatorioPDF(relatorio);
-    const nome = arquivo.filename;
-    const file = new File([arquivo.blob], nome, { type: 'application/pdf' });
-
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: 'Relatório da Cantina da Escola',
-          text: `Relatório financeiro de ${data.split('-').reverse().join('/')}.`
-        });
-        mostrarToast('Relatório pronto para compartilhar.', 'success');
-        return;
-      } catch (error) {
-        if (error.name === 'AbortError') return;
-        console.warn('Compartilhamento nativo indisponível:', error);
-      }
-    }
-
-    const url = URL.createObjectURL(arquivo.blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = nome;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-    mostrarToast('PDF gerado e baixado. Você pode compartilhá-lo pelo aparelho.', 'success');
-  } finally {
-    setBusy(false);
-  }
-}
-
 async function executarLogout() {
   const pendentes = await quantidadePendente().catch(() => 0);
   if (pendentes > 0) {
@@ -797,6 +1144,13 @@ async function executarLogout() {
   state.status = null;
   state.statusError = null;
   state.ultimaConsulta = null;
+  state.historico = null;
+  state.fechamentoSelecionado = null;
+  state.relatorioFechamentoSelecionado = null;
+  state.pdfDiario = null;
+  state.pdfPeriodo = null;
+  state.pdfFechamento = null;
+  destruirGraficosHistorico();
   logoutButton.classList.add('hidden');
   renderLogin(pendentes > 0
     ? `${pendentes} movimentação(ões) continuam salvas neste aparelho. Entre novamente para sincronizá-las.`
@@ -821,7 +1175,22 @@ root.addEventListener('click', async (event) => {
     } else if (action === 'share-app') {
       await mostrarModalCompartilharApp();
     } else if (action === 'report-pdf') {
-      await gerarECompartilharRelatorioPDF();
+      await prepararRelatorioDiarioPDF();
+    } else if (action === 'history-search') {
+      await consultarHistoricoPeriodo();
+    } else if (action === 'history-detail') {
+      await selecionarFechamentoHistorico(button.dataset.closeId, button.dataset.closeDate);
+    } else if (action === 'history-clear-detail') {
+      state.fechamentoSelecionado = null;
+      state.relatorioFechamentoSelecionado = null;
+      state.pdfFechamento = null;
+      await renderDashboard();
+    } else if (action === 'prepare-period-pdf') {
+      await prepararPDFPeriodo();
+    } else if (action === 'save-pdf') {
+      await salvarPDFPreparado(button.dataset.pdfScope);
+    } else if (action === 'share-pdf') {
+      compartilharPDFPreparado(button.dataset.pdfScope);
     } else if (action === 'sale-pix' || action === 'sale-cash' || action === 'entry' || action === 'exit') {
       mostrarFormularioOperacao(action);
     } else if (action === 'cancel-operation') {
@@ -840,6 +1209,28 @@ root.addEventListener('click', async (event) => {
     }
   } catch (error) {
     mostrarToast(error.message, 'error');
+  }
+});
+
+
+root.addEventListener('change', (event) => {
+  if (event.target?.id === 'report-date') {
+    state.pdfDiario = null;
+    const host = document.getElementById('daily-pdf-actions');
+    if (host) host.innerHTML = '';
+  }
+
+  if (event.target?.id === 'history-start' || event.target?.id === 'history-end') {
+    state.historicoInicio = document.getElementById('history-start')?.value || state.historicoInicio;
+    state.historicoFim = document.getElementById('history-end')?.value || state.historicoFim;
+    state.historico = null;
+    state.fechamentoSelecionado = null;
+    state.relatorioFechamentoSelecionado = null;
+    state.pdfPeriodo = null;
+    state.pdfFechamento = null;
+    destruirGraficosHistorico();
+    const host = document.getElementById('history-results');
+    if (host) host.innerHTML = '<div class="empty-state">Período alterado. Toque em “Consultar fechamentos” para atualizar os resultados.</div>';
   }
 });
 

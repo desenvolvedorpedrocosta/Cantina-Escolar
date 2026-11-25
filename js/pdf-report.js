@@ -201,3 +201,159 @@ export async function criarRelatorioPDF(relatorio) {
   const filename = `relatorio-cantina-da-escola-${relatorio.data || 'diario'}.pdf`;
   return { blob, filename };
 }
+
+
+function dataPeriodoPdf(valor) {
+  const partes = String(valor || '').split('-');
+  return partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : String(valor || '');
+}
+
+function statusPeriodoPdf(status) {
+  const valor = String(status || '').toUpperCase();
+  if (valor === 'CONFERIDO' || valor === 'BATEU') return 'BATEU';
+  if (valor === 'SOBRA') return 'SOBRA';
+  if (valor === 'FALTA') return 'FALTA';
+  return valor || '—';
+}
+
+export async function criarRelatorioPeriodoPDF(historico) {
+  await garantirBibliotecasPDF();
+  const JsPDF = window.jspdf?.jsPDF;
+  if (!JsPDF) throw new Error('A biblioteca de PDF não carregou. Verifique a conexão e tente novamente.');
+
+  const doc = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const resumo = historico?.consolidado || {};
+  const dias = Array.isArray(historico?.dias) ? historico.dias : [];
+  const fechamentos = Array.isArray(historico?.fechamentos) ? historico.fechamentos : [];
+  const periodo = historico?.periodo || {};
+  const inicio = dataPeriodoPdf(periodo.inicio);
+  const fim = dataPeriodoPdf(periodo.fim);
+  const largura = doc.internal.pageSize.getWidth();
+
+  doc.setProperties({
+    title: `Consolidado da Cantina da Escola - ${inicio} a ${fim}`,
+    subject: 'Consolidado financeiro e histórico de fechamentos',
+    author: 'Cantina da Escola',
+    creator: 'Cantina da Escola'
+  });
+
+  doc.setFillColor(16, 43, 70);
+  doc.rect(0, 0, largura, 37, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('Cantina da Escola', 14, 15);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`Relatório consolidado · ${inicio} a ${fim}`, 14, 23);
+  doc.text(`Gerado em ${new Date().toLocaleString('pt-BR')}`, 14, 30);
+
+  doc.setTextColor(25, 50, 71);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text('Resumo do período', 14, 47);
+
+  const cards = [
+    ['Total vendido', moedaPdf(resumo.totalVendido)],
+    ['Dinheiro', moedaPdf(resumo.dinheiro)],
+    ['Pix', moedaPdf(resumo.pix)],
+    ['Entradas/suprimentos', moedaPdf(resumo.entradas)],
+    ['Saídas/sangrias', moedaPdf(resumo.saidas)],
+    ['Saldo esperado (fechamentos)', moedaPdf(resumo.saldoEsperado)],
+    ['Dinheiro contado', moedaPdf(resumo.dinheiroContado)],
+    ['Diferença acumulada', moedaPdf(resumo.diferenca)],
+    ['Fechamentos registrados', String(Number(resumo.quantidadeFechamentos || fechamentos.length))]
+  ];
+  const cardW = (largura - 28 - 10) / 3;
+  cards.forEach((card, index) => {
+    const col = index % 3;
+    const row = Math.floor(index / 3);
+    const x = 14 + col * (cardW + 5);
+    const y = 53 + row * 19;
+    doc.setDrawColor(218, 229, 235);
+    doc.setFillColor(247, 250, 251);
+    doc.roundedRect(x, y, cardW, 15, 2, 2, 'FD');
+    doc.setTextColor(102, 120, 135);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.2);
+    doc.text(card[0], x + 3, y + 5);
+    doc.setTextColor(16, 43, 70);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.2);
+    doc.text(card[1], x + 3, y + 11.5);
+  });
+
+  let yTabela = 116;
+  doc.setTextColor(25, 50, 71);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Fechamentos do período', 14, yTabela);
+  yTabela += 5;
+
+  const corpoFechamentos = fechamentos.map((item) => [
+    dataPeriodoPdf(item.data),
+    String(item.responsavel || '—'),
+    moedaPdf(item.totalVendido),
+    moedaPdf(item.saldoEsperado),
+    moedaPdf(item.dinheiroContado),
+    moedaPdf(item.diferenca),
+    statusPeriodoPdf(item.statusExibicao || item.status)
+  ]);
+
+  doc.autoTable({
+    startY: yTabela,
+    head: [['Data', 'Responsável', 'Vendido', 'Esperado', 'Contado', 'Diferença', 'Status']],
+    body: corpoFechamentos.length ? corpoFechamentos : [['—', 'Sem fechamentos no período', '—', '—', '—', '—', '—']],
+    theme: 'grid',
+    styles: { font: 'helvetica', fontSize: 6.8, cellPadding: 2, textColor: [35, 54, 68], overflow: 'linebreak' },
+    headStyles: { fillColor: [16, 43, 70], textColor: [255, 255, 255], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [246, 249, 250] },
+    columnStyles: {
+      0: { cellWidth: 20 }, 1: { cellWidth: 30 },
+      2: { cellWidth: 28, halign: 'right' }, 3: { cellWidth: 28, halign: 'right' },
+      4: { cellWidth: 28, halign: 'right' }, 5: { cellWidth: 28, halign: 'right' }, 6: { cellWidth: 18 }
+    },
+    margin: { left: 14, right: 14, bottom: 17 }
+  });
+
+  let yDias = (doc.lastAutoTable?.finalY || yTabela) + 12;
+  if (yDias > 255) {
+    doc.addPage();
+    yDias = 18;
+  }
+  doc.setTextColor(25, 50, 71);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Evolução diária das vendas', 14, yDias);
+
+  const corpoDias = dias.map((dia) => [
+    dataPeriodoPdf(dia.data),
+    moedaPdf(dia.dinheiro),
+    moedaPdf(dia.pix),
+    moedaPdf(dia.totalVendido)
+  ]);
+  doc.autoTable({
+    startY: yDias + 5,
+    head: [['Data', 'Dinheiro', 'Pix', 'Total vendido']],
+    body: corpoDias.length ? corpoDias : [['—', '—', '—', 'Sem movimentações']],
+    theme: 'striped',
+    styles: { font: 'helvetica', fontSize: 7, cellPadding: 2.1, textColor: [35, 54, 68] },
+    headStyles: { fillColor: [22, 107, 118], textColor: [255, 255, 255] },
+    margin: { left: 14, right: 14, bottom: 17 }
+  });
+
+  const totalPaginas = doc.internal.getNumberOfPages();
+  for (let pagina = 1; pagina <= totalPaginas; pagina++) {
+    doc.setPage(pagina);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(120, 133, 143);
+    doc.text(`Cantina da Escola · Página ${pagina} de ${totalPaginas}`, largura - 14, doc.internal.pageSize.getHeight() - 7, { align: 'right' });
+  }
+
+  const blob = doc.output('blob');
+  return {
+    blob,
+    filename: `cantina-da-escola-consolidado-${periodo.inicio || 'inicio'}-a-${periodo.fim || 'fim'}.pdf`
+  };
+}
