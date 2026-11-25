@@ -27,6 +27,8 @@ const state = {
   historico: null,
   historicoInicio: '',
   historicoFim: '',
+  historicoAutoIniciado: false,
+  historicoConsultaEmCurso: false,
   fechamentoSelecionado: null,
   relatorioFechamentoSelecionado: null,
   pdfDiario: null,
@@ -477,15 +479,26 @@ function renderHistoricoFechamentos() {
   if (!state.historicoInicio || !state.historicoFim) {
     const hoje = dataISOlocal();
     state.historicoFim = hoje;
-    state.historicoInicio = subtrairDiasISO(hoje, 29);
+    state.historicoInicio = subtrairDiasISO(hoje, 1095);
   }
 
   const historico = state.historico;
-  let resultados = '<div class="empty-state">Escolha o período e toque em “Consultar fechamentos” para visualizar o histórico.</div>';
+  let resultados = '<div class="empty-state">O histórico será carregado automaticamente ao entrar na Gestão. Você também pode escolher outro período e tocar em “Consultar fechamentos”.</div>'; 
 
   if (historico) {
     const c = historico.consolidado || {};
-    const fechamentos = Array.isArray(historico.fechamentos) ? historico.fechamentos : [];
+    const fechamentos = (Array.isArray(historico.fechamentos) ? historico.fechamentos : [])
+      .slice()
+      .sort((a, b) => String(a.data).localeCompare(String(b.data)) || String(a.dataHora || '').localeCompare(String(b.dataHora || '')));
+    const diagnostico = historico.diagnostico || {};
+    let mensagemSemFechamento = 'Nenhum fechamento foi encontrado entre as datas selecionadas. A consulta inclui a data inicial e a final.';
+    if (Number(diagnostico.linhasLidas || 0) === 0) {
+      mensagemSemFechamento += ' A aba FECHAMENTOS não possui registros abaixo do cabeçalho.';
+    } else if (Number(diagnostico.datasReconhecidas || 0) === 0) {
+      mensagemSemFechamento += ` A aba FECHAMENTOS possui ${Number(diagnostico.linhasLidas)} linha(s), mas nenhuma data pôde ser reconhecida na coluna B.`;
+    } else if (diagnostico.dataMaisAntiga && diagnostico.dataMaisRecente) {
+      mensagemSemFechamento += ` As datas registradas na planilha vão de ${dataPtCurta(diagnostico.dataMaisAntiga)} até ${dataPtCurta(diagnostico.dataMaisRecente)}.`;
+    }
     const linhas = fechamentos.length ? fechamentos.map((item) => `
       <tr class="${state.fechamentoSelecionado?.id === item.id ? 'is-selected' : ''}">
         <td>${dataPtCurta(item.data)}</td>
@@ -496,7 +509,10 @@ function renderHistoricoFechamentos() {
         <td>${formatarMoeda(item.diferenca)}</td>
         <td><span class="closure-status ${String(item.statusExibicao || '').toLowerCase()}">${statusFechamentoLabel(item.statusExibicao || item.status)}</span></td>
         <td><button type="button" class="button button-outline button-small" data-action="history-detail" data-close-id="${escapeHtml(item.id)}" data-close-date="${escapeHtml(item.data)}">Detalhar</button></td>
-      </tr>`).join('') : '<tr><td colspan="8"><div class="empty-state">Nenhum fechamento encontrado neste período.</div></td></tr>';
+      </tr>`).join('') : `<tr><td colspan="8"><div class="empty-state">${escapeHtml(mensagemSemFechamento)}</div></td></tr>`;
+
+    const periodoResumo = historico.periodo || { inicio: state.historicoInicio, fim: state.historicoFim };
+    const avisoPeriodo = `<p class="subtle history-period-note">Período consultado: ${dataPtCurta(periodoResumo.inicio)} até ${dataPtCurta(periodoResumo.fim)} · ${fechamentos.length} fechamento(s). A data inicial e a data final são incluídas na consulta.</p>`;
 
     let detalhe = '';
     if (state.fechamentoSelecionado && state.relatorioFechamentoSelecionado) {
@@ -521,7 +537,7 @@ function renderHistoricoFechamentos() {
       </section>`;
     }
 
-    resultados = `<div class="history-summary">
+    resultados = `${avisoPeriodo}<div class="history-summary">
         <div class="metric-grid history-period-metrics">
           ${metric('Total vendido no período', c.totalVendido, true)}
           ${metric('Dinheiro', c.dinheiro)}
@@ -757,11 +773,14 @@ async function prepararRelatorioDiarioPDF() {
 
 async function consultarHistoricoPeriodo() {
   if (!navigator.onLine) throw new Error('Conecte-se à internet para consultar os fechamentos.');
-  const inicio = document.getElementById('history-start')?.value || '';
-  const fim = document.getElementById('history-end')?.value || '';
+  if (state.historicoConsultaEmCurso) return;
+
+  const inicio = document.getElementById('history-start')?.value || state.historicoInicio;
+  const fim = document.getElementById('history-end')?.value || state.historicoFim;
   if (!inicio || !fim) throw new Error('Informe as duas datas do período.');
   if (inicio > fim) throw new Error('A data inicial não pode ser posterior à data final.');
 
+  state.historicoConsultaEmCurso = true;
   setBusy(true);
   try {
     state.historicoInicio = inicio;
@@ -772,8 +791,15 @@ async function consultarHistoricoPeriodo() {
     state.pdfPeriodo = null;
     state.pdfFechamento = null;
     await renderDashboard();
-    mostrarToast(`${state.historico.fechamentos?.length || 0} fechamento(s) encontrado(s).`, 'success');
+    const quantidade = Number(state.historico.quantidadeEncontrada ?? state.historico.fechamentos?.length ?? 0);
+    mostrarToast(
+      quantidade
+        ? `${quantidade} fechamento(s) encontrado(s), da data inicial à data final.`
+        : `Nenhum fechamento encontrado entre ${dataPtCurta(inicio)} e ${dataPtCurta(fim)}.`,
+      quantidade ? 'success' : ''
+    );
   } finally {
+    state.historicoConsultaEmCurso = false;
     setBusy(false);
   }
 }
@@ -901,6 +927,21 @@ async function renderDashboard() {
   logoutButton.classList.remove('hidden');
   atualizarBotaoInstalacao();
   if (sessao.perfil === 'ADMIN' && state.historico) montarGraficosHistorico(state.historico);
+
+  // Ao entrar na Gestão, consulta automaticamente os fechamentos do período padrão.
+  // A flag evita chamadas repetidas em cada atualização do painel.
+  if (
+    sessao.perfil === 'ADMIN' &&
+    navigator.onLine &&
+    !state.historico &&
+    !state.historicoAutoIniciado
+  ) {
+    state.historicoAutoIniciado = true;
+    Promise.resolve().then(() => consultarHistoricoPeriodo()).catch((error) => {
+      state.historicoAutoIniciado = false;
+      mostrarToast(`Não foi possível carregar o histórico de fechamentos: ${error.message}`, 'error');
+    });
+  }
 }
 
 async function atualizarStatus({ silencioso = false } = {}) {
@@ -927,6 +968,9 @@ async function atualizarStatus({ silencioso = false } = {}) {
       sair();
       state.sessao = null;
       state.status = null;
+      state.historico = null;
+      state.historicoAutoIniciado = false;
+      state.historicoConsultaEmCurso = false;
       renderLogin('Sua sessão expirou. Entre novamente; as movimentações pendentes continuam guardadas neste aparelho.');
       return;
     }
@@ -1145,6 +1189,8 @@ async function executarLogout() {
   state.statusError = null;
   state.ultimaConsulta = null;
   state.historico = null;
+  state.historicoAutoIniciado = false;
+  state.historicoConsultaEmCurso = false;
   state.fechamentoSelecionado = null;
   state.relatorioFechamentoSelecionado = null;
   state.pdfDiario = null;
