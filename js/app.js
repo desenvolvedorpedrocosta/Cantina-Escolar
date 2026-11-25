@@ -130,7 +130,12 @@ function obterStatusCache() {
 }
 
 function salvarStatusCache(status) {
-  localStorage.setItem(STORAGE_STATUS, JSON.stringify({ ...status, cacheAtualizadoEm: Date.now() }));
+  try {
+    localStorage.setItem(STORAGE_STATUS, JSON.stringify({ ...status, cacheAtualizadoEm: Date.now() }));
+  } catch (error) {
+    // A ausência de permissão de armazenamento não pode impedir a exibição do caixa.
+    console.warn('Não foi possível atualizar o cache local do caixa:', error);
+  }
 }
 
 function dataHojePt() {
@@ -348,7 +353,7 @@ function renderLogin(message = '') {
         </div>
         <form id="login-form" class="form-stack">
           ${state.perfilLogin === 'OPERADORA' ? '<div class="field"><label for="login-name">Seu nome</label><input id="login-name" name="nome" type="text" maxlength="60" autocomplete="name" placeholder="Digite seu nome" required></div>' : ''}
-          <div class="field"><label for="login-pin">PIN de 4 números</label><input id="login-pin" name="pin" class="pin-input" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="••••" required></div>
+          <div class="field"><label for="login-pin">PIN de 4 números</label><div class="password-control"><input id="login-pin" name="pin" class="pin-input" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="••••" required><button class="password-toggle" type="button" data-toggle-password="login-pin" aria-label="Mostrar PIN" aria-pressed="false"><svg class="eye-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.7"/></svg><svg class="eye-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3 21 21M10.6 6.2A10.8 10.8 0 0 1 12 6c6.5 0 10 6 10 6a15.7 15.7 0 0 1-3.2 3.8M6.2 6.3C3.5 8.1 2 12 2 12s3.5 6 10 6c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button></div></div>
           <label class="remember-login"><input type="checkbox" name="lembrarLogin" ${prefereLembrarLogin() ? 'checked' : ''}><span>Salvar meu login neste aparelho</span></label>
           <button class="button button-primary button-block" type="submit" ${!urlConfigurada() ? 'disabled' : ''}>Entrar no sistema</button>
         </form>
@@ -1069,7 +1074,7 @@ function mostrarFormularioPins() {
   if (!slot) return;
   slot.innerHTML = `<div class="panel form-panel"><div class="panel-head"><div><h3>Alterar PIN compartilhado</h3><p class="subtle">Os PINs têm quatro números e precisam ser diferentes.</p></div></div>
     <form id="pin-form" class="form-stack"><div class="field"><label for="pin-type">PIN que será alterado</label><select id="pin-type" name="tipo"><option value="OPERADORA">Operadoras</option><option value="ADMIN">Gestão</option></select></div>
-    <div class="field"><label for="new-pin">Novo PIN</label><input id="new-pin" class="pin-input" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required></div>
+    <div class="field"><label for="new-pin">Novo PIN</label><div class="password-control"><input id="new-pin" class="pin-input" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required><button class="password-toggle" type="button" data-toggle-password="new-pin" aria-label="Mostrar PIN" aria-pressed="false"><svg class="eye-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.7"/></svg><svg class="eye-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3 21 21M10.6 6.2A10.8 10.8 0 0 1 12 6c6.5 0 10 6 10 6a15.7 15.7 0 0 1-3.2 3.8M6.2 6.3C3.5 8.1 2 12 2 12s3.5 6 10 6c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button></div></div>
     <div class="form-actions"><button class="button button-primary" type="submit">Salvar novo PIN</button><button class="button button-outline" type="button" data-action="cancel-admin">Cancelar</button></div></form></div>`;
 }
 
@@ -1140,52 +1145,25 @@ async function tratarMovimentacao(form) {
 }
 
 async function tratarFechamento(form) {
-  if (!navigator.onLine) {
-    throw new Error('O fechamento exige conexão com a internet.');
-  }
-
-  const formData = new FormData(form);
-  const textoContado = String(formData.get('contado') ?? '').trim();
-
-  // Não permite que campo vazio seja interpretado como zero.
-  if (!textoContado || !/\d/.test(textoContado)) {
-    throw new Error('Informe o dinheiro contado na gaveta. Digite 0,00 somente se realmente não houver dinheiro.');
-  }
-
-  const contado = parseMoneyToCents(textoContado);
-
-  if (!Number.isSafeInteger(contado) || contado < 0) {
-    throw new Error('Informe o dinheiro contado corretamente.');
-  }
-
+  if (!navigator.onLine) throw new Error('O fechamento exige conexão com a internet.');
   setBusy(true);
-
   try {
     const sync = await sincronizarFila();
-
     if (sync.pendentes > 0) {
-      throw new Error(
-        `Ainda existem ${sync.pendentes} movimentação(ões) pendente(s). Resolva a sincronização antes do fechamento.`
-      );
+      throw new Error(`Ainda existem ${sync.pendentes} movimentação(ões) pendente(s). Resolva a sincronização antes do fechamento.`);
     }
-
+    const formData = new FormData(form);
+    const contado = parseMoneyToCents(formData.get('contado'));
+    if (!Number.isSafeInteger(contado)) throw new Error('Informe o dinheiro contado corretamente.');
     const resultado = await fecharCaixa({
       token: state.sessao.token,
       dinheiroContadoCentavos: contado,
       confirmouSincronizacao: true,
       observacao: String(formData.get('observacao') || '').trim()
     });
-
-    mostrarToast(
-      `Caixa fechado: ${resultado.status}. Diferença: ${formatarMoeda(resultado.diferenca)}.`,
-      resultado.status === 'CONFERIDO' ? 'success' : ''
-    );
-
+    mostrarToast(`Caixa fechado: ${resultado.status}. Diferença: ${formatarMoeda(resultado.diferenca)}.`, resultado.status === 'CONFERIDO' ? 'success' : '');
     await atualizarStatus({ silencioso: true });
-
-  } finally {
-    setBusy(false);
-  }
+  } finally { setBusy(false); }
 }
 
 async function tratarAlteracaoPin(form) {
@@ -1210,7 +1188,7 @@ async function executarLogout() {
   }
 
   sair();
-  localStorage.removeItem(STORAGE_STATUS);
+  try { localStorage.removeItem(STORAGE_STATUS); } catch (_) { /* armazenamento pode estar bloqueado */ }
   state.sessao = null;
   state.status = null;
   state.statusError = null;
@@ -1231,6 +1209,19 @@ async function executarLogout() {
 }
 
 root.addEventListener('click', async (event) => {
+  const passwordToggle = event.target.closest('[data-toggle-password]');
+  if (passwordToggle) {
+    const input = document.getElementById(passwordToggle.dataset.togglePassword);
+    if (input) {
+      const mostrar = input.type === 'password';
+      input.type = mostrar ? 'text' : 'password';
+      passwordToggle.setAttribute('aria-pressed', String(mostrar));
+      passwordToggle.setAttribute('aria-label', mostrar ? 'Ocultar PIN' : 'Mostrar PIN');
+      input.focus();
+    }
+    return;
+  }
+
   const roleButton = event.target.closest('[data-role]');
   if (roleButton) {
     state.perfilLogin = roleButton.dataset.role;
@@ -1375,24 +1366,64 @@ window.addEventListener('offline', async () => {
   if (state.sessao) await atualizarStatus({ silencioso: true });
 });
 
-async function iniciar() {
+function liberarSplashDaAplicacao() {
+  if (typeof window.__CANTINA_LIBERAR_SPLASH__ === 'function') {
+    window.__CANTINA_LIBERAR_SPLASH__();
+    return;
+  }
   const splash = document.getElementById('splash-screen');
-  const splashMinimo = new Promise((resolve) => window.setTimeout(() => {
-    splash?.classList.add('is-hidden');
-    window.setTimeout(() => splash?.remove(), 380);
-    resolve();
-  }, 1800));
+  if (!splash) return;
+  splash.classList.add('is-hidden');
+  window.setTimeout(() => splash.remove(), 420);
+}
+
+function mostrarAguardandoCaixa() {
+  root.innerHTML = `
+    <section class="panel" style="padding:24px">
+      <div class="loading-state" style="min-height:180px">
+        <span class="spinner" aria-hidden="true"></span>
+        <strong>Conectando ao caixa compartilhado…</strong>
+        <p class="subtle">A tela de acesso já foi validada. Estamos consultando os dados do caixa.</p>
+      </div>
+      <div class="form-actions">
+        <button class="button button-outline" type="button" data-action="retry-status">Tentar novamente</button>
+        <button class="button button-outline" type="button" data-action="logout">Voltar ao login</button>
+      </div>
+    </section>`;
+}
+
+function mostrarFalhaInicializacao(error) {
+  const mensagem = error && error.message
+    ? error.message
+    : 'Ocorreu um erro inesperado durante a inicialização.';
   try {
-    document.getElementById('year').textContent = new Date().getFullYear();
+    renderLogin(`Não foi possível restaurar o acesso salvo. ${mensagem}`);
+  } catch (erroRenderizacao) {
+    console.error('Falha ao montar a tela de acesso:', erroRenderizacao);
+    root.innerHTML = `<section class="panel" style="padding:24px"><h1>Não foi possível abrir a Cantina da Escola</h1><p class="subtle">${escapeHtml(mensagem)}</p><button class="button button-primary" type="button" onclick="window.location.reload()">Recarregar aplicativo</button></section>`;
+  }
+}
+
+async function iniciar() {
+  const inicio = Date.now();
+  const tempoMinimoSplash = 900;
+
+  try {
+    const ano = document.getElementById('year');
+    if (ano) ano.textContent = new Date().getFullYear();
+
     definirConexao();
     atualizarBotaoInstalacao();
 
+    // O registro do Service Worker é independente da abertura da interface.
+    // Uma falha ou lentidão no cache não pode segurar a tela de login.
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-      try { await navigator.serviceWorker.register('./sw.js'); }
-      catch (error) { console.warn('Service Worker não foi registrado:', error); }
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+        .catch((error) => console.warn('Service Worker não foi registrado:', error));
     }
 
     state.sessao = sessaoAtual();
+
     if (!state.sessao) {
       renderLogin();
       return;
@@ -1400,27 +1431,40 @@ async function iniciar() {
 
     logoutButton.classList.remove('hidden');
     state.status = obterStatusCache();
+
     if (state.status) {
+      state.ultimaConsulta = state.status.cacheAtualizadoEm || null;
       await renderDashboard();
-    }
-    if (!navigator.onLine && !state.status) {
-      root.innerHTML = '<section class="panel"><div class="notice warning"><div><strong>Sem conexão e sem dados do caixa neste aparelho</strong>Conecte-se à internet para carregar o caixa compartilhado pela primeira vez.</div></div><div class="form-actions"><button class="button button-outline" id="retry-status" type="button">Tentar novamente</button><button class="button button-outline" type="button" data-action="logout">Sair e voltar ao login</button></div></section>';
-      document.getElementById('retry-status').addEventListener('click', () => atualizarStatus());
-      return;
+    } else if (!navigator.onLine) {
+      root.innerHTML = '<section class="panel"><div class="notice warning"><div><strong>Sem conexão e sem dados do caixa neste aparelho</strong>Conecte-se à internet para carregar o caixa compartilhado pela primeira vez.</div></div><div class="form-actions"><button class="button button-outline" type="button" data-action="retry-status">Tentar novamente</button><button class="button button-outline" type="button" data-action="logout">Sair e voltar ao login</button></div></section>';
+    } else {
+      mostrarAguardandoCaixa();
     }
 
+    // Atualização do servidor em segundo plano: a Splash Screen e a interface
+    // não ficam aguardando o tempo limite da requisição à API.
     if (navigator.onLine) {
-      await atualizarStatus({ silencioso: true });
-      const pendentes = await quantidadePendente();
-      if (pendentes) await sincronizarEAtualizar();
-    } else {
-      await renderDashboard();
+      atualizarStatus({ silencioso: true })
+        .then(async () => {
+          if (!state.sessao || !navigator.onLine) return;
+          try {
+            const pendentes = await quantidadePendente();
+            if (pendentes > 0) await sincronizarEAtualizar();
+          } catch (error) {
+            console.warn('Não foi possível consultar/sincronizar a fila local:', error);
+          }
+        })
+        .catch((error) => console.error('Falha na atualização inicial do caixa:', error));
     }
+  } catch (error) {
+    console.error('Erro durante a inicialização da Cantina da Escola:', error);
+    mostrarFalhaInicializacao(error);
   } finally {
-    await splashMinimo;
+    const restante = Math.max(0, tempoMinimoSplash - (Date.now() - inicio));
+    if (restante) await new Promise((resolve) => window.setTimeout(resolve, restante));
+    document.documentElement.dataset.cantinaBooted = '1';
+    liberarSplashDaAplicacao();
   }
 }
-iniciar().catch((error) => {
-  console.error(error);
-  renderLogin(error.message || 'Não foi possível iniciar o aplicativo.');
-});
+
+iniciar();

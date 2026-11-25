@@ -3,6 +3,7 @@ const DB_VERSION = 1;
 const QUEUE_STORE = 'fila';
 
 let dbPromise;
+let memoriaSessao = null;
 
 function abrirBanco() {
   if (dbPromise) return dbPromise;
@@ -64,33 +65,71 @@ export async function removerDaFila(idRequisicao) {
 }
 
 export function obterSessao() {
+  const candidatos = [];
+
   try {
     const salvo = localStorage.getItem('cantina_sessao');
-    const temporario = sessionStorage.getItem('cantina_sessao');
-    return JSON.parse(salvo || temporario || 'null');
-  } catch {
-    return null;
+    if (salvo) candidatos.push(salvo);
+  } catch (_) {
+    // O acesso ao armazenamento local pode ser bloqueado pelo navegador.
   }
+
+  try {
+    const temporario = sessionStorage.getItem('cantina_sessao');
+    if (temporario) candidatos.push(temporario);
+  } catch (_) {
+    // A sessão em memória continua válida nesta aba.
+  }
+
+  for (const texto of candidatos) {
+    try {
+      const sessao = JSON.parse(texto);
+      if (sessao && typeof sessao.token === 'string' && sessao.token) {
+        memoriaSessao = sessao;
+        return sessao;
+      }
+    } catch (_) {
+      // Ignora somente a entrada corrompida e tenta a outra forma de armazenamento.
+    }
+  }
+
+  return memoriaSessao;
 }
 
 export function prefereLembrarLogin() {
-  return localStorage.getItem('cantina_lembrar_login') === '1';
+  try {
+    return localStorage.getItem('cantina_lembrar_login') === '1';
+  } catch (_) {
+    return false;
+  }
 }
 
 export function salvarSessao(sessao, lembrarNesteAparelho = false) {
+  memoriaSessao = sessao;
   const valor = JSON.stringify(sessao);
-  localStorage.removeItem('cantina_sessao');
-  sessionStorage.removeItem('cantina_sessao');
-  localStorage.setItem('cantina_lembrar_login', lembrarNesteAparelho ? '1' : '0');
-  if (lembrarNesteAparelho) {
-    localStorage.setItem('cantina_sessao', valor);
-  } else {
-    sessionStorage.setItem('cantina_sessao', valor);
+  let salvoNoLocal = false;
+
+  try {
+    localStorage.removeItem('cantina_sessao');
+    localStorage.setItem('cantina_lembrar_login', lembrarNesteAparelho ? '1' : '0');
+    if (lembrarNesteAparelho) {
+      localStorage.setItem('cantina_sessao', valor);
+      salvoNoLocal = true;
+    }
+  } catch (_) {
+    // Se o navegador bloquear localStorage, tentaremos manter a sessão nesta aba.
+  }
+
+  try {
+    sessionStorage.removeItem('cantina_sessao');
+    if (!salvoNoLocal) sessionStorage.setItem('cantina_sessao', valor);
+  } catch (_) {
+    // A sessão permanece disponível em memória até a aba ser encerrada.
   }
 }
 
 export function limparSessao() {
-  localStorage.removeItem('cantina_sessao');
-  sessionStorage.removeItem('cantina_sessao');
+  memoriaSessao = null;
+  try { localStorage.removeItem('cantina_sessao'); } catch (_) {}
+  try { sessionStorage.removeItem('cantina_sessao'); } catch (_) {}
 }
-
