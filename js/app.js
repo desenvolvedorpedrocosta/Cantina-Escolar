@@ -822,6 +822,14 @@ async function prepararRelatorioDiarioPDF() {
   }
 }
 
+function rolarParaResumoGestao() {
+  const resumo = document.getElementById('management-summary-card');
+  if (!resumo) return;
+  window.requestAnimationFrame(() => {
+    resumo.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 async function consultarResumoGestaoPorData(data) {
   if (!navigator.onLine) throw new Error('Conecte-se à internet para consultar outra data.');
 
@@ -939,24 +947,55 @@ async function renderDashboard() {
     ? status.diasAnterioresComMovimentacoes
     : diasAnterioresSemFechamento;
 
+  const diasAnterioresPendentes = diasAnterioresComMovimentacoes
+    .filter((dia) => String(dia.status || '').toUpperCase() === 'PENDENTE_FECHAMENTO');
+  const diasAnterioresFechados = diasAnterioresComMovimentacoes
+    .filter((dia) => String(dia.status || '').toUpperCase() !== 'PENDENTE_FECHAMENTO');
+
+  const renderItemDiaAnterior = (dia, pendente) => `
+    <div class="management-day-item ${pendente ? 'is-pending' : 'is-closed'}">
+      <div class="management-day-info">
+        <strong>${escapeHtml(dataPtCurta(dia.data))}</strong>
+        <span class="management-day-badge ${pendente ? 'is-warning' : 'is-success'}">
+          ${pendente ? 'Pendente de fechamento' : 'Fechamento registrado'}
+        </span>
+        <small>${escapeHtml(String(dia.quantidadeMovimentacoes || 0))} movimentação(ões)
+          · vendas ${formatarMoeda(dia.totalVendido)}
+          · gaveta ${formatarMoeda(dia.saldoEsperado)}
+        </small>
+      </div>
+      <div class="management-day-actions">
+        <button class="button button-outline button-small" type="button"
+          data-action="view-management-date" data-date="${escapeHtml(dia.data)}">Ver este dia</button>
+        ${pendente ? `<button class="button button-primary button-small" type="button"
+          data-action="close-management-date" data-date="${escapeHtml(dia.data)}"
+          ${!online || pendentes ? 'disabled' : ''}>Fechar dia</button>` : ''}
+      </div>
+    </div>`;
+
   const avisoDiasAnteriores = sessao.perfil === 'ADMIN' && diasAnterioresComMovimentacoes.length
-    ? `<div class="notice warning" style="margin-bottom:16px">
-        <div>
+    ? `<section class="management-days-panel" aria-label="Movimentações de datas anteriores">
+        <div class="management-days-heading">
           <strong>Movimentações encontradas em datas anteriores</strong>
-          <p style="margin:6px 0 9px">A data de sincronização pode ser diferente da data em que a movimentação ocorreu. Cada dia permanece separado; selecione abaixo para conferir os valores e lançamentos daquele dia.</p>
-          ${diasAnterioresComMovimentacoes.map((dia) => `
-            <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:8px 0;padding-top:8px;border-top:1px solid rgba(148,101,28,.18)">
-              <span>
-                <strong>${escapeHtml(dataPtCurta(dia.data))}</strong>
-                · ${dia.status === 'PENDENTE_FECHAMENTO' ? 'Pendente de fechamento' : 'Fechamento registrado'}
-                <br>
-                <span>${escapeHtml(String(dia.quantidadeMovimentacoes || 0))} movimentação(ões) · vendas ${formatarMoeda(dia.totalVendido)} · gaveta ${formatarMoeda(dia.saldoEsperado)}</span>
-              </span>
-              <button class="button button-outline button-small" type="button" data-action="view-management-date" data-date="${escapeHtml(dia.data)}">Ver este dia</button>
-            </div>
-          `).join('')}
+          <p>A data de sincronização pode ser diferente da data em que o lançamento ocorreu. Os dias abaixo são conferidos e fechados individualmente.</p>
         </div>
-      </div>`
+        ${diasAnterioresPendentes.length ? `
+          <div class="management-day-group pending">
+            <div class="management-day-group-heading">
+              <strong>Caixas pendentes de fechamento</strong>
+              <span class="management-day-count">${diasAnterioresPendentes.length}</span>
+            </div>
+            ${diasAnterioresPendentes.map((dia) => renderItemDiaAnterior(dia, true)).join('')}
+          </div>` : ''}
+        ${diasAnterioresFechados.length ? `
+          <div class="management-day-group closed">
+            <div class="management-day-group-heading">
+              <strong>Dias já fechados</strong>
+              <span class="management-day-count">${diasAnterioresFechados.length}</span>
+            </div>
+            ${diasAnterioresFechados.map((dia) => renderItemDiaAnterior(dia, false)).join('')}
+          </div>` : ''}
+      </section>`
     : '';
 
   const dataHojeGestao = status?.data || dataISOlocal();
@@ -1013,8 +1052,18 @@ async function renderDashboard() {
           ? `Fechamento registrado: ${escapeHtml(relatorioGestaoSelecionado.fechamento.status || 'registrado')}.`
           : 'Não consta fechamento registrado para esta data.')
       : '';
+    const fechamentoDataJaRegistrado = consultaHistorica
+      ? !!relatorioGestaoSelecionado.fechamento
+      : !!status.fechado;
+    const diaHistoricoPendente = diasAnterioresPendentes.some((dia) => dia.data === dataRelatorio);
+    const dataPodeSerFechada = consultaHistorica
+      ? diaHistoricoPendente && !fechamentoDataJaRegistrado
+      : !fechamentoDataJaRegistrado;
+    const textoBotaoFechamento = fechamentoDataJaRegistrado
+      ? `Fechamento registrado — ${dataPtCurta(dataRelatorio)}`
+      : `Fechar caixa de ${dataPtCurta(dataRelatorio)}`;
 
-    adminPanel = `<section class="panel">
+    adminPanel = `<section class="panel management-summary-card ${consultaHistorica ? 'is-date-selected' : ''}" id="management-summary-card">
       <div class="panel-head">
         <div>
           <p class="eyebrow">Visão da gestão</p>
@@ -1040,11 +1089,13 @@ async function renderDashboard() {
           ? '<p class="cash-balance-zero">Não há saldo em dinheiro registrado nesta data.</p>'
           : ''}
         ${consultaHistorica
-          ? `<p class="subtle"><strong>${fechamentoDescricao}</strong> A consulta histórica não altera o caixa atual. Abertura, operações e eventual fechamento permanecem vinculados a hoje (${escapeHtml(dataPtCurta(dataHojeGestao))}).</p>`
+          ? `<p class="subtle"><strong>${fechamentoDescricao}</strong> O fechamento selecionado será gravado exclusivamente em ${escapeHtml(dataPtCurta(dataRelatorio))}. A abertura e as operações do caixa atual continuam vinculadas a hoje (${escapeHtml(dataPtCurta(dataHojeGestao))}).</p>`
           : ''}
       </div>
       <div class="admin-tools">
-        <button class="button button-dark" type="button" data-action="close-cash" ${status.fechado || !online || pendentes ? 'disabled' : ''}>Fechar caixa de hoje (${escapeHtml(dataPtCurta(dataHojeGestao))})</button>
+        <button class="button button-dark" type="button" data-action="close-cash"
+          data-date="${escapeHtml(dataRelatorio)}"
+          ${!dataPodeSerFechada || !online || pendentes ? 'disabled' : ''}>${escapeHtml(textoBotaoFechamento)}</button>
         <button class="button button-outline" type="button" data-action="pin-tools">Alterar PINs</button>
       </div>
       <div class="report-controls">
@@ -1062,7 +1113,10 @@ async function renderDashboard() {
       </div>
       <p class="subtle" style="margin:9px 0 0">“Consultar data” altera o resumo e as movimentações exibidas. O PDF usa a mesma data selecionada. Para voltar ao dia atual, selecione ${escapeHtml(dataPtCurta(dataHojeGestao))} e consulte.</p>
       <div id="admin-form-slot"></div>
-      ${pendentes ? '<p class="subtle" style="margin:12px 0 0">O fechamento de hoje ficará disponível depois que todas as movimentações forem sincronizadas.</p>' : ''}
+      ${pendentes ? '<p class="subtle" style="margin:12px 0 0">O fechamento ficará disponível depois que todas as movimentações deste aparelho forem sincronizadas.</p>' : ''}
+      ${consultaHistorica && !diaHistoricoPendente && !fechamentoDataJaRegistrado
+        ? '<p class="subtle" style="margin:12px 0 0">Esta data não aparece como pendente de fechamento. Selecione um dia listado em “Caixas pendentes de fechamento” para registrar seu fechamento.</p>'
+        : ''}
     </section>`;
     adminAnalytics = renderAnalytics(
       indicadoresGestaoExibidos || {},
@@ -1254,12 +1308,18 @@ function mostrarFormularioOperacao(tipo) {
   valueInput.focus();
 }
 
-function mostrarFormularioFechamento() {
+function mostrarFormularioFechamento(dataSolicitada = '') {
   const slot = document.getElementById('admin-form-slot');
   if (!slot) return;
-  const esperado = state.status?.resumo?.saldoEsperado ?? 0;
-  slot.innerHTML = `<div class="panel form-panel"><div class="panel-head"><div><h3>Conferir e fechar o caixa</h3><p class="subtle">Dinheiro que deve estar na gaveta: <strong>${formatarMoeda(esperado)}</strong>. Conte somente as notas e moedas; pagamentos por Pix não entram nessa conferência.</p></div></div>
-    <form id="close-form" class="form-stack"><div class="field"><label for="counted-value">Dinheiro contado na gaveta</label><input id="counted-value" name="contado" type="text" inputmode="numeric" data-money-input autocomplete="off" placeholder="0,00" required></div>
+  const dataFechamento = dataSolicitada || state.dataResumoGestaoEscolhida || state.status?.data || dataISOlocal();
+  const relatorioSelecionado = state.relatorioGestaoSelecionado &&
+    state.relatorioGestaoSelecionado.data === dataFechamento
+      ? state.relatorioGestaoSelecionado
+      : null;
+  const resumoSelecionado = relatorioSelecionado?.resumo || state.status?.resumo || {};
+  const esperado = resumoSelecionado.saldoEsperado ?? 0;
+  slot.innerHTML = `<div class="panel form-panel"><div class="panel-head"><div><h3>Conferir e fechar o caixa de ${escapeHtml(dataPtCurta(dataFechamento))}</h3><p class="subtle">Dinheiro que deve estar na gaveta nesta data: <strong>${formatarMoeda(esperado)}</strong>. Conte somente as notas e moedas; pagamentos por Pix não entram nessa conferência.</p></div></div>
+    <form id="close-form" class="form-stack"><input type="hidden" name="data" value="${escapeHtml(dataFechamento)}"><div class="field"><label for="counted-value">Dinheiro contado na gaveta</label><input id="counted-value" name="contado" type="text" inputmode="numeric" data-money-input autocomplete="off" placeholder="0,00" required></div>
     <div class="field"><label for="close-note">Observação (opcional)</label><input id="close-note" name="observacao" maxlength="180" placeholder="Observação do fechamento"></div>
     <div class="notice warning"><div><strong>Confirmação de sincronização</strong>O fechamento só será permitido depois de sincronizar todas as movimentações pendentes.</div></div>
     <div class="form-actions"><button class="button button-primary" type="submit" ${!navigator.onLine ? 'disabled' : ''}>Confirmar fechamento</button><button class="button button-outline" type="button" data-action="cancel-admin">Cancelar</button></div></form></div>`;
@@ -1351,13 +1411,15 @@ async function tratarFechamento(form) {
     const formData = new FormData(form);
     const contado = parseMoneyToCents(formData.get('contado'));
     if (!Number.isSafeInteger(contado)) throw new Error('Informe o dinheiro contado corretamente.');
+    const dataFechamento = String(formData.get('data') || state.status?.data || dataISOlocal());
     const resultado = await fecharCaixa({
       token: state.sessao.token,
+      data: dataFechamento,
       dinheiroContadoCentavos: contado,
       confirmouSincronizacao: true,
       observacao: String(formData.get('observacao') || '').trim()
     });
-    mostrarToast(`Caixa fechado: ${resultado.status}. Diferença: ${formatarMoeda(resultado.diferenca)}.`, resultado.status === 'CONFERIDO' ? 'success' : '');
+    mostrarToast(`Caixa de ${dataPtCurta(resultado.data || dataFechamento)} fechado: ${resultado.status}. Diferença: ${formatarMoeda(resultado.diferenca)}.`, resultado.status === 'CONFERIDO' ? 'success' : '');
     await atualizarStatus({ silencioso: true });
   } finally { setBusy(false); }
 }
@@ -1442,9 +1504,15 @@ root.addEventListener('click', async (event) => {
       await consultarResumoGestaoPorData(document.getElementById('report-date')?.value);
     } else if (action === 'view-management-date') {
       const data = button.dataset.date;
-      const campoData = document.getElementById('report-date');
-      if (campoData) campoData.value = data;
       await consultarResumoGestaoPorData(data);
+      rolarParaResumoGestao();
+    } else if (action === 'close-management-date') {
+      if (!navigator.onLine) throw new Error('Conecte-se à internet para fechar este dia.');
+      if (await quantidadePendente()) throw new Error('Sincronize todas as movimentações deste aparelho antes de fechar o dia.');
+      const data = button.dataset.date;
+      await consultarResumoGestaoPorData(data);
+      mostrarFormularioFechamento(data);
+      rolarParaResumoGestao();
     } else if (action === 'history-search') {
       await consultarHistoricoPeriodo();
     } else if (action === 'history-detail') {
@@ -1470,7 +1538,7 @@ root.addEventListener('click', async (event) => {
       await sincronizarEAtualizar();
     } else if (action === 'close-cash') {
       if (await quantidadePendente()) throw new Error('Sincronize todas as movimentações antes de fechar o caixa.');
-      mostrarFormularioFechamento();
+      mostrarFormularioFechamento(button.dataset.date || state.dataResumoGestaoEscolhida || state.status?.data || '');
     } else if (action === 'pin-tools') {
       mostrarFormularioPins();
     } else if (action === 'cancel-admin') {
