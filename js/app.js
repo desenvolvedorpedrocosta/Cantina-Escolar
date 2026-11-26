@@ -33,7 +33,9 @@ const state = {
   relatorioFechamentoSelecionado: null,
   pdfDiario: null,
   pdfPeriodo: null,
-  pdfFechamento: null
+  pdfFechamento: null,
+  dataResumoGestaoEscolhida: '',
+  relatorioGestaoSelecionado: null
 };
 
 let historicoCharts = [];
@@ -375,8 +377,8 @@ function metric(label, value, emphasis = false) {
   return `<div class="metric ${emphasis ? 'emphasis' : ''}"><span>${escapeHtml(label)}</span><strong>${formatarMoeda(value)}</strong></div>`;
 }
 
-function renderMovements(items = []) {
-  if (!items.length) return '<div class="empty-state">Nenhuma movimentação confirmada hoje.</div>';
+function renderMovements(items = [], mensagemVazia = 'Nenhuma movimentação confirmada hoje.') {
+  if (!items.length) return `<div class="empty-state">${escapeHtml(mensagemVazia)}</div>`;
   return `
     <div class="table-wrap">
       <table class="movements">
@@ -442,7 +444,7 @@ async function renderPendingPanel() {
     </section>`;
 }
 
-function renderAnalytics(indicadores = {}) {
+function renderAnalytics(indicadores = {}, dataExibida = '', dataAtual = '') {
   const quantidade = Number(indicadores.quantidadeVendas || 0);
   const media = Number(indicadores.ticketMedio || 0);
   const cash = Number(indicadores.totalDinheiro || 0);
@@ -451,9 +453,15 @@ function renderAnalytics(indicadores = {}) {
   const cashPct = total > 0 ? Math.round((cash / total) * 100) : 0;
   const pixPct = total > 0 ? 100 - cashPct : 0;
   const operadores = Array.isArray(indicadores.operadores) ? indicadores.operadores : [];
+  const tituloData = dataExibida === dataAtual
+    ? `Indicadores de hoje — ${dataPtCurta(dataExibida)}`
+    : `Indicadores — ${dataPtCurta(dataExibida)}`;
+  const textoData = dataExibida === dataAtual
+    ? `Números calculados com as movimentações confirmadas de hoje (${dataPtCurta(dataExibida)}).`
+    : `Números calculados exclusivamente com as movimentações confirmadas de ${dataPtCurta(dataExibida)}.`;
   const ranking = operadores.length ? operadores.slice(0, 5).map((item) => `
     <div class="analytics-row"><strong>${escapeHtml(item.nome)}</strong><div class="analytics-bar"><span style="width:${Math.max(0, Math.min(100, Number(item.percentual || 0)))}%"></span></div><span>${formatarMoeda(item.totalVendido)}</span></div>`).join('') : '<div class="empty-state">Ainda não há vendas por operadora.</div>';
-  return `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Acompanhamento</p><h2>Indicadores do dia</h2><p class="subtle">Números calculados com todas as movimentações confirmadas de hoje.</p></div></div>
+  return `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Acompanhamento</p><h2>${escapeHtml(tituloData)}</h2><p class="subtle">${escapeHtml(textoData)}</p></div></div>
     <div class="analytics-grid">
       <div class="metric"><span>Quantidade de vendas</span><strong>${quantidade}</strong></div>
       <div class="metric"><span>Valor médio por venda</span><strong>${formatarMoeda(media)}</strong></div>
@@ -793,15 +801,55 @@ async function prepararRelatorioDiarioPDF() {
   if (!navigator.onLine) throw new Error('Conecte-se à internet para buscar o relatório atualizado.');
   const campoData = document.getElementById('report-date');
   const data = campoData?.value || state.status?.data;
+  const hoje = state.status?.data || dataISOlocal();
   if (!data || !/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new Error('Selecione uma data válida para o relatório.');
+  if (data > hoje) throw new Error('Não é possível consultar uma data futura.');
 
   setBusy(true);
   try {
     const relatorio = await consultarRelatorioGestao(state.sessao.token, data);
+    state.dataResumoGestaoEscolhida = data === hoje ? '' : data;
+    state.relatorioGestaoSelecionado = data === hoje ? null : relatorio;
+    state.pdfDiario = null;
+    await renderDashboard();
+
     state.pdfDiario = { ...(await criarRelatorioPDF(relatorio)), data };
     const host = document.getElementById('daily-pdf-actions');
     if (host) host.innerHTML = renderAcoesPDF('daily', `Relatório diário de ${dataPtCurta(data)} pronto.`);
-    mostrarToast('Relatório diário preparado. Escolha salvar ou compartilhar.', 'success');
+    mostrarToast('Relatório diário preparado. O resumo na tela está na mesma data do PDF.', 'success');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function consultarResumoGestaoPorData(data) {
+  if (!navigator.onLine) throw new Error('Conecte-se à internet para consultar outra data.');
+
+  const dataConsulta = String(data || '').trim();
+  const hoje = state.status?.data || dataISOlocal();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataConsulta)) {
+    throw new Error('Selecione uma data válida para consultar o resumo.');
+  }
+  if (dataConsulta > hoje) throw new Error('Não é possível consultar uma data futura.');
+
+  setBusy(true);
+  try {
+    if (dataConsulta === hoje) {
+      state.dataResumoGestaoEscolhida = '';
+      state.relatorioGestaoSelecionado = null;
+      state.pdfDiario = null;
+      await atualizarStatus({ silencioso: true });
+    } else {
+      const relatorio = await consultarRelatorioGestao(state.sessao.token, dataConsulta);
+      state.dataResumoGestaoEscolhida = dataConsulta;
+      state.relatorioGestaoSelecionado = relatorio;
+      state.pdfDiario = null;
+      await renderDashboard();
+    }
+
+    const host = document.getElementById('daily-pdf-actions');
+    if (host) host.innerHTML = '';
+    mostrarToast(`Resumo de ${dataPtCurta(dataConsulta)} carregado.`, 'success');
   } finally {
     setBusy(false);
   }
@@ -887,11 +935,50 @@ async function renderDashboard() {
   const diasAnterioresSemFechamento = Array.isArray(status?.diasAnterioresSemFechamento)
     ? status.diasAnterioresSemFechamento
     : [];
-  const avisoDiasAnteriores = diasAnterioresSemFechamento.length
-    ? `<div class="notice warning" style="margin-bottom:16px"><div><strong>Há dia(s) anterior(es) aguardando conferência</strong>
-        ${diasAnterioresSemFechamento.map((dia) => `<p style="margin:6px 0 0"><strong>${escapeHtml(dataPtCurta(dia.data))}</strong>: ${escapeHtml(String(dia.quantidadeMovimentacoes || 0))} movimentação(ões), vendas de ${formatarMoeda(dia.totalVendido)}, saldo esperado de ${formatarMoeda(dia.saldoEsperado)}. Este valor permanece vinculado a ${escapeHtml(dataPtCurta(dia.data))} e não compõe o caixa de hoje.</p>`).join('')}
-        <p style="margin:8px 0 0">Confira esses dias no relatório diário da Gestão antes de considerar o histórico conciliado.</p></div></div>`
+  const diasAnterioresComMovimentacoes = Array.isArray(status?.diasAnterioresComMovimentacoes)
+    ? status.diasAnterioresComMovimentacoes
+    : diasAnterioresSemFechamento;
+
+  const avisoDiasAnteriores = sessao.perfil === 'ADMIN' && diasAnterioresComMovimentacoes.length
+    ? `<div class="notice warning" style="margin-bottom:16px">
+        <div>
+          <strong>Movimentações encontradas em datas anteriores</strong>
+          <p style="margin:6px 0 9px">A data de sincronização pode ser diferente da data em que a movimentação ocorreu. Cada dia permanece separado; selecione abaixo para conferir os valores e lançamentos daquele dia.</p>
+          ${diasAnterioresComMovimentacoes.map((dia) => `
+            <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:8px 0;padding-top:8px;border-top:1px solid rgba(148,101,28,.18)">
+              <span>
+                <strong>${escapeHtml(dataPtCurta(dia.data))}</strong>
+                · ${dia.status === 'PENDENTE_FECHAMENTO' ? 'Pendente de fechamento' : 'Fechamento registrado'}
+                <br>
+                <span>${escapeHtml(String(dia.quantidadeMovimentacoes || 0))} movimentação(ões) · vendas ${formatarMoeda(dia.totalVendido)} · gaveta ${formatarMoeda(dia.saldoEsperado)}</span>
+              </span>
+              <button class="button button-outline button-small" type="button" data-action="view-management-date" data-date="${escapeHtml(dia.data)}">Ver este dia</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>`
     : '';
+
+  const dataHojeGestao = status?.data || dataISOlocal();
+  const relatorioGestaoSelecionado = state.relatorioGestaoSelecionado &&
+    state.relatorioGestaoSelecionado.data === state.dataResumoGestaoEscolhida
+      ? state.relatorioGestaoSelecionado
+      : null;
+  const consultaHistoricaGestao = !!(relatorioGestaoSelecionado &&
+    relatorioGestaoSelecionado.data !== dataHojeGestao);
+  const dataResumoGestaoExibida = consultaHistoricaGestao
+    ? relatorioGestaoSelecionado.data
+    : dataHojeGestao;
+  const resumoGestaoExibido = consultaHistoricaGestao
+    ? relatorioGestaoSelecionado.resumo
+    : status?.resumo;
+  const indicadoresGestaoExibidos = consultaHistoricaGestao
+    ? relatorioGestaoSelecionado.indicadores
+    : status?.indicadores;
+  const movimentacoesGestaoExibidas = consultaHistoricaGestao
+    ? relatorioGestaoSelecionado.movimentacoes
+    : status?.movimentacoes;
+
 
   const openPanel = !status?.aberturaRealizada && !status?.fechado
     ? `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Início do expediente</p><h2>Abrir o caixa</h2><p class="subtle">A abertura pode ser feita com R$ 0,00. O fundo para troco pode ser registrado como entrada.</p></div></div>
@@ -917,10 +1004,27 @@ async function renderDashboard() {
 
   let adminPanel = '';
   let adminAnalytics = '';
-  if (sessao.perfil === 'ADMIN' && status?.resumo) {
-    const r = status.resumo;
-    const dataRelatorio = status.data || new Date().toISOString().slice(0, 10);
-    adminPanel = `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Visão da gestão</p><h2>Resumo financeiro de hoje</h2></div><button class="button button-outline button-small" type="button" data-action="refresh">Atualizar</button></div>
+  if (sessao.perfil === 'ADMIN' && resumoGestaoExibido) {
+    const r = resumoGestaoExibido;
+    const dataRelatorio = dataResumoGestaoExibida;
+    const consultaHistorica = consultaHistoricaGestao;
+    const fechamentoDescricao = consultaHistorica
+      ? (relatorioGestaoSelecionado.fechamento
+          ? `Fechamento registrado: ${escapeHtml(relatorioGestaoSelecionado.fechamento.status || 'registrado')}.`
+          : 'Não consta fechamento registrado para esta data.')
+      : '';
+
+    adminPanel = `<section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Visão da gestão</p>
+          <h2>Resumo financeiro — ${escapeHtml(dataPtCurta(dataRelatorio))}</h2>
+          <p class="subtle">${consultaHistorica
+            ? 'Consulta histórica. Os valores abaixo consideram somente lançamentos ocorridos nesta data.'
+            : 'Resumo do dia atual. Os valores consideram somente lançamentos ocorridos nesta data.'}</p>
+        </div>
+        <button class="button button-outline button-small" type="button" data-action="refresh">Atualizar</button>
+      </div>
       <div class="metric-grid">
         ${metric('Total vendido', r.totalVendido, true)}
         ${metric('Vendas em dinheiro', r.dinheiro)}
@@ -931,23 +1035,55 @@ async function renderDashboard() {
       </div>
       <div class="cash-balance-help">
         <strong>O que esse valor representa?</strong>
-        <p>É quanto dinheiro em papel e moeda deve estar na gaveta agora. Considera o dinheiro inicial + entradas + vendas em dinheiro − saídas. <strong>Não inclui pagamentos por Pix.</strong></p>
-        ${Number(r.saldoEsperado || 0) === 0 ? '<p class="cash-balance-zero">O dinheiro na gaveta está começando em R$ 0,00. O valor aumenta quando você registra um fundo para troco, outra entrada ou uma venda em dinheiro.</p>' : ''}
+        <p>É quanto dinheiro em papel e moeda deve estar na gaveta nesta data. Considera abertura + entradas + vendas em dinheiro − saídas. <strong>Não inclui pagamentos por Pix.</strong></p>
+        ${Number(r.saldoEsperado || 0) === 0
+          ? '<p class="cash-balance-zero">Não há saldo em dinheiro registrado nesta data.</p>'
+          : ''}
+        ${consultaHistorica
+          ? `<p class="subtle"><strong>${fechamentoDescricao}</strong> A consulta histórica não altera o caixa atual. Abertura, operações e eventual fechamento permanecem vinculados a hoje (${escapeHtml(dataPtCurta(dataHojeGestao))}).</p>`
+          : ''}
       </div>
-      <div class="admin-tools"><button class="button button-dark" type="button" data-action="close-cash" ${status.fechado || !online || pendentes ? 'disabled' : ''}>Fechar caixa</button><button class="button button-outline" type="button" data-action="pin-tools">Alterar PINs</button></div>
+      <div class="admin-tools">
+        <button class="button button-dark" type="button" data-action="close-cash" ${status.fechado || !online || pendentes ? 'disabled' : ''}>Fechar caixa de hoje (${escapeHtml(dataPtCurta(dataHojeGestao))})</button>
+        <button class="button button-outline" type="button" data-action="pin-tools">Alterar PINs</button>
+      </div>
       <div class="report-controls">
-        <div class="field"><label for="report-date">Data do relatório</label><input id="report-date" type="date" value="${escapeHtml(dataRelatorio)}" max="${escapeHtml(dataRelatorio)}"></div>
+        <div class="field">
+          <label for="report-date">Data do resumo / relatório</label>
+          <input id="report-date" type="date" value="${escapeHtml(dataRelatorio)}" max="${escapeHtml(dataHojeGestao)}">
+        </div>
+        <button class="button button-dark" type="button" data-action="consult-management-date" ${!online ? 'disabled' : ''}>Consultar data</button>
         <button class="button button-primary" type="button" data-action="report-pdf" ${!online ? 'disabled' : ''}>Preparar PDF diário</button>
       </div>
-      <div id="daily-pdf-actions">${state.pdfDiario?.data === dataRelatorio ? renderAcoesPDF('daily', `Relatório diário de ${dataPtCurta(state.pdfDiario.data)} pronto.`) : ''}</div>
-      <p class="subtle" style="margin:9px 0 0">Depois de preparar, escolha “Salvar PDF” ou “Compartilhar PDF”.</p>
+      <div id="daily-pdf-actions">
+        ${state.pdfDiario?.data === dataRelatorio
+          ? renderAcoesPDF('daily', `Relatório diário de ${dataPtCurta(state.pdfDiario.data)} pronto.`)
+          : ''}
+      </div>
+      <p class="subtle" style="margin:9px 0 0">“Consultar data” altera o resumo e as movimentações exibidas. O PDF usa a mesma data selecionada. Para voltar ao dia atual, selecione ${escapeHtml(dataPtCurta(dataHojeGestao))} e consulte.</p>
       <div id="admin-form-slot"></div>
-      ${pendentes ? '<p class="subtle" style="margin:12px 0 0">O fechamento ficará disponível depois que todas as movimentações forem sincronizadas.</p>' : ''}
+      ${pendentes ? '<p class="subtle" style="margin:12px 0 0">O fechamento de hoje ficará disponível depois que todas as movimentações forem sincronizadas.</p>' : ''}
     </section>`;
-    adminAnalytics = renderAnalytics(status.indicadores || {});
+    adminAnalytics = renderAnalytics(
+      indicadoresGestaoExibidos || {},
+      dataResumoGestaoExibida,
+      dataHojeGestao
+    );
   }
 
-  const movements = status?.movimentacoes || [];
+  const movements = sessao.perfil === 'ADMIN'
+    ? (movimentacoesGestaoExibidas || [])
+    : (status?.movimentacoes || []);
+  const dataMovimentacoesExibida = sessao.perfil === 'ADMIN'
+    ? dataResumoGestaoExibida
+    : dataHojeGestao;
+  const tituloMovimentacoes = sessao.perfil === 'ADMIN'
+    ? `Movimentações de ${dataPtCurta(dataMovimentacoesExibida)}`
+    : 'Movimentações de hoje';
+  const mensagemMovimentacoesVazias = sessao.perfil === 'ADMIN'
+    ? `Nenhuma movimentação confirmada em ${dataPtCurta(dataMovimentacoesExibida)}.`
+    : 'Nenhuma movimentação confirmada hoje.';
+
   const refreshTime = state.ultimaConsulta ? new Date(state.ultimaConsulta).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : '—';
 
   destruirGraficosHistorico();
@@ -965,8 +1101,8 @@ async function renderDashboard() {
     ${adminPanel}
     ${adminAnalytics}
     ${sessao.perfil === 'ADMIN' ? renderHistoricoFechamentos() : ''}
-    <section class="panel"><div class="panel-head"><div><p class="eyebrow">Registro compartilhado</p><h2>Movimentações de hoje</h2><p class="subtle">Últimos lançamentos confirmados no servidor.</p></div><button class="button button-outline button-small" type="button" data-action="refresh">Atualizar</button></div>
-      ${renderMovements(movements)}
+    <section class="panel"><div class="panel-head"><div><p class="eyebrow">Registro compartilhado</p><h2>${escapeHtml(tituloMovimentacoes)}</h2><p class="subtle">${sessao.perfil === 'ADMIN' ? 'Abertura, vendas, entradas e saídas ocorridas na data selecionada.' : 'Últimos lançamentos confirmados no servidor.'}</p></div><button class="button button-outline button-small" type="button" data-action="refresh">Atualizar</button></div>
+      ${renderMovements(movements, mensagemMovimentacoesVazias)}
     </section>
     ${pendentes ? await renderPendingPanel() : ''}`;
 
@@ -1008,6 +1144,23 @@ async function atualizarStatus({ silencioso = false } = {}) {
     state.statusError = null;
     state.ultimaConsulta = Date.now();
     salvarStatusCache(status);
+
+    if (state.sessao.perfil === 'ADMIN' && state.dataResumoGestaoEscolhida) {
+      if (state.dataResumoGestaoEscolhida === status.data) {
+        state.dataResumoGestaoEscolhida = '';
+        state.relatorioGestaoSelecionado = null;
+      } else {
+        try {
+          state.relatorioGestaoSelecionado = await consultarRelatorioGestao(
+            state.sessao.token,
+            state.dataResumoGestaoEscolhida
+          );
+        } catch (erroRelatorio) {
+          console.warn('Não foi possível atualizar a consulta histórica selecionada:', erroRelatorio);
+        }
+      }
+    }
+
     await renderDashboard();
   } catch (error) {
     if (/sessão expirada|entre novamente|sessão não identificada/i.test(error.message)) {
@@ -1017,6 +1170,8 @@ async function atualizarStatus({ silencioso = false } = {}) {
       state.historico = null;
       state.historicoAutoIniciado = false;
       state.historicoConsultaEmCurso = false;
+      state.dataResumoGestaoEscolhida = '';
+      state.relatorioGestaoSelecionado = null;
       renderLogin('Sua sessão expirou. Entre novamente; as movimentações pendentes continuam guardadas neste aparelho.');
       return;
     }
@@ -1242,6 +1397,8 @@ async function executarLogout() {
   state.pdfDiario = null;
   state.pdfPeriodo = null;
   state.pdfFechamento = null;
+  state.dataResumoGestaoEscolhida = '';
+  state.relatorioGestaoSelecionado = null;
   destruirGraficosHistorico();
   logoutButton.classList.add('hidden');
   renderLogin(pendentes > 0
@@ -1281,6 +1438,13 @@ root.addEventListener('click', async (event) => {
       await mostrarModalCompartilharApp();
     } else if (action === 'report-pdf') {
       await prepararRelatorioDiarioPDF();
+    } else if (action === 'consult-management-date') {
+      await consultarResumoGestaoPorData(document.getElementById('report-date')?.value);
+    } else if (action === 'view-management-date') {
+      const data = button.dataset.date;
+      const campoData = document.getElementById('report-date');
+      if (campoData) campoData.value = data;
+      await consultarResumoGestaoPorData(data);
     } else if (action === 'history-search') {
       await consultarHistoricoPeriodo();
     } else if (action === 'history-detail') {
