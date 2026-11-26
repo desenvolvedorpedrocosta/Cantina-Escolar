@@ -416,3 +416,124 @@ body { overflow-x: hidden; }
 .password-toggle .eye-off { display: none; }
 .password-toggle[aria-pressed="true"] .eye-on { display: none; }
 .password-toggle[aria-pressed="true"] .eye-off { display: block; }
+
+
+/* Gestão: agrupamento de datas anteriores e destaque da data consultada. */
+.management-days-panel {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 16px;
+  border: 1px solid #dce5eb;
+  border-radius: 16px;
+  background: #fff;
+  color: var(--text, #203247);
+}
+.management-days-heading > strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.management-days-heading > p {
+  margin: 0;
+  color: var(--muted, #68798a);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.management-day-group {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+}
+.management-day-group.pending {
+  border-color: #f0d6a6;
+  background: #fff9ed;
+}
+.management-day-group.closed {
+  border-color: #d5e8df;
+  background: #f5faf7;
+}
+.management-day-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+.management-day-group.pending .management-day-group-heading { color: #895b13; }
+.management-day-group.closed .management-day-group-heading { color: #286653; }
+.management-day-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 23px;
+  height: 23px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.8);
+  font-size: 11px;
+}
+.management-day-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(70, 90, 110, .12);
+}
+.management-day-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 9px;
+  min-width: 0;
+}
+.management-day-info > strong { font-size: 13px; }
+.management-day-info > small {
+  flex-basis: 100%;
+  color: var(--muted, #68798a);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.management-day-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 21px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+}
+.management-day-badge.is-warning { color: #80530c; background: #ffedc5; }
+.management-day-badge.is-success { color: #27624f; background: #e2f2e9; }
+.management-day-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.management-summary-card {
+  scroll-margin-top: 18px;
+  transition: border-color .25s ease, box-shadow .25s ease;
+}
+.management-summary-card.is-date-selected {
+  border-color: #d6a044;
+  box-shadow: 0 0 0 3px rgba(214,160,68,.16), 0 12px 30px rgba(91,66,24,.08);
+  animation: management-date-highlight 1.25s ease-out;
+}
+@keyframes management-date-highlight {
+  0% { box-shadow: 0 0 0 7px rgba(214,160,68,.24), 0 12px 30px rgba(91,66,24,.08); }
+  100% { box-shadow: 0 0 0 3px rgba(214,160,68,.16), 0 12px 30px rgba(91,66,24,.08); }
+}
+@media (max-width: 620px) {
+  .management-day-item { align-items: flex-start; flex-direction: column; }
+  .management-day-actions { width: 100%; justify-content: stretch; }
+  .management-day-actions .button { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .management-summary-card.is-date-selected { animation: none; }
+}
