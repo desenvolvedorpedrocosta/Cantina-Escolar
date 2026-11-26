@@ -10,10 +10,34 @@ export async function quantidadePendente() {
   return (await listarFila()).length;
 }
 
+
+function garantirDataOriginal(payload) {
+  const existente = payload.dataHoraOriginal || payload.dataDispositivo || '';
+  const instante = existente ? new Date(existente) : new Date();
+  const dataValida = !Number.isNaN(instante.getTime());
+  const dataHoraOriginal = dataValida ? instante.toISOString() : new Date().toISOString();
+  const dataLocal = dataValida ? instante : new Date(dataHoraOriginal);
+  const pad = (valor) => String(valor).padStart(2, '0');
+  const dataCompetencia = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.dataCompetencia || ''))
+    ? String(payload.dataCompetencia)
+    : [dataLocal.getFullYear(), pad(dataLocal.getMonth() + 1), pad(dataLocal.getDate())].join('-');
+
+  return {
+    ...payload,
+    dataCompetencia,
+    dataHoraOriginal,
+    // Preserva o nome legado lido pelo Apps Script e pelos registros antigos.
+    dataDispositivo: payload.dataDispositivo || dataHoraOriginal
+  };
+}
+
 export async function enviarMovimentacao(payload) {
+  // A data do lançamento é fixada antes de salvar a fila. Sincronizações futuras
+  // reutilizam exatamente estes metadados, inclusive quando mudarem de dia.
+  const payloadComDataOriginal = garantirDataOriginal(payload);
   const item = {
-    idRequisicao: payload.idRequisicao || criarId(),
-    payload: { ...payload },
+    idRequisicao: payloadComDataOriginal.idRequisicao || criarId(),
+    payload: { ...payloadComDataOriginal },
     criadoEm: new Date().toISOString(),
     tentativas: 0,
     ultimoErro: ''

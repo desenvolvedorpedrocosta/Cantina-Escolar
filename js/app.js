@@ -401,12 +401,43 @@ function renderMovements(items = []) {
 async function renderPendingPanel() {
   const queue = await detalhesFila();
   if (!queue.length) return '';
+
+  const grupos = new Map();
+  queue.forEach((item) => {
+    const payload = item.payload || {};
+    const instanteOriginal = payload.dataHoraOriginal || payload.dataDispositivo || item.criadoEm;
+    const instante = new Date(instanteOriginal);
+    const pad = (valor) => String(valor).padStart(2, '0');
+    const dataCalculada = Number.isNaN(instante.getTime())
+      ? String(item.criadoEm || '').slice(0, 10)
+      : [instante.getFullYear(), pad(instante.getMonth() + 1), pad(instante.getDate())].join('-');
+    const competencia = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.dataCompetencia || ''))
+      ? String(payload.dataCompetencia)
+      : dataCalculada;
+    if (!grupos.has(competencia)) grupos.set(competencia, []);
+    grupos.get(competencia).push({ item, instanteOriginal });
+  });
+
+  const diasOrdenados = Array.from(grupos.keys()).sort();
+  const conteudoPorDia = diasOrdenados.map((dia) => {
+    const itens = grupos.get(dia);
+    return `
+      <div class="pending-day" style="margin-top:12px">
+        <strong>${escapeHtml(dataPtCurta(dia))} · ${itens.length} pendente(s)</strong>
+        <div class="pending-list">${itens.map(({ item, instanteOriginal }) => `
+          <div class="pending-item">
+            <strong>${escapeHtml(item.payload.tipo || 'Movimentação')} · ${formatarMoeda((item.payload.valorCentavos || 0) / 100)}</strong>
+            <span>Ocorrido em ${escapeHtml(formatarDataHora(instanteOriginal))}</span>
+            ${item.ultimoErro ? `<br><span>${escapeHtml(item.ultimoErro)}</span>` : ''}
+          </div>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
   return `
     <section class="panel" style="margin-bottom:16px">
-      <div class="panel-head"><div><h3>Movimentações aguardando sincronização</h3><p class="subtle">Elas permanecem salvas neste aparelho e serão reenviadas com o mesmo identificador.</p></div><span class="status-badge pending">${queue.length} pendente(s)</span></div>
-      <div class="pending-list">${queue.map((item) => `
-        <div class="pending-item"><strong>${escapeHtml(item.payload.tipo)} · ${formatarMoeda((item.payload.valorCentavos || 0) / 100)}</strong>
-        ${escapeHtml(new Date(item.criadoEm).toLocaleString('pt-BR'))}${item.ultimoErro ? `<br><span>${escapeHtml(item.ultimoErro)}</span>` : ''}</div>`).join('')}</div>
+      <div class="panel-head"><div><h3>Movimentações aguardando sincronização</h3><p class="subtle">A data original de cada lançamento é preservada. Ao sincronizar, cada movimentação será contabilizada no dia correspondente.</p></div><span class="status-badge pending">${queue.length} pendente(s)</span></div>
+      ${conteudoPorDia}
       <div class="form-actions"><button type="button" class="button button-outline" data-action="sync">Sincronizar agora</button></div>
     </section>`;
 }
@@ -853,6 +884,15 @@ async function renderDashboard() {
     cacheWarning = `<div class="notice warning" style="margin-bottom:16px"><div><strong>Não foi possível atualizar o caixa</strong>Os dados abaixo podem estar desatualizados. Detalhe: ${escapeHtml(state.statusError)}</div></div>`;
   }
 
+  const diasAnterioresSemFechamento = Array.isArray(status?.diasAnterioresSemFechamento)
+    ? status.diasAnterioresSemFechamento
+    : [];
+  const avisoDiasAnteriores = diasAnterioresSemFechamento.length
+    ? `<div class="notice warning" style="margin-bottom:16px"><div><strong>Há dia(s) anterior(es) aguardando conferência</strong>
+        ${diasAnterioresSemFechamento.map((dia) => `<p style="margin:6px 0 0"><strong>${escapeHtml(dataPtCurta(dia.data))}</strong>: ${escapeHtml(String(dia.quantidadeMovimentacoes || 0))} movimentação(ões), vendas de ${formatarMoeda(dia.totalVendido)}, saldo esperado de ${formatarMoeda(dia.saldoEsperado)}. Este valor permanece vinculado a ${escapeHtml(dataPtCurta(dia.data))} e não compõe o caixa de hoje.</p>`).join('')}
+        <p style="margin:8px 0 0">Confira esses dias no relatório diário da Gestão antes de considerar o histórico conciliado.</p></div></div>`
+    : '';
+
   const openPanel = !status?.aberturaRealizada && !status?.fechado
     ? `<section class="panel"><div class="panel-head"><div><p class="eyebrow">Início do expediente</p><h2>Abrir o caixa</h2><p class="subtle">A abertura pode ser feita com R$ 0,00. O fundo para troco pode ser registrado como entrada.</p></div></div>
         <form id="opening-form" class="form-stack"><div class="field"><label for="opening-value">Dinheiro inicial na gaveta</label><input id="opening-value" name="valor" type="text" inputmode="numeric" data-money-input autocomplete="off" value="0,00" placeholder="0,00" required><small>A gaveta começa com R$ 0,00 se não houver dinheiro em espécie. Informe o fundo inicial ou registre-o depois como entrada. Pix não entra no dinheiro da gaveta.</small></div><button class="button button-primary" type="submit" ${!online ? 'disabled' : ''}>Abrir caixa</button></form></section>`
@@ -918,6 +958,7 @@ async function renderDashboard() {
     </div>
     ${cacheWarning}
     ${pendentes ? `<div class="notice warning" style="margin-bottom:16px"><div><strong>${pendentes} movimentação(ões) pendente(s)</strong>Não feche o caixa enquanto houver movimentações aguardando sincronização.</div></div>` : ''}
+    ${avisoDiasAnteriores}
     ${openPanel}
     ${closedPanel}
     ${actionPanel}
