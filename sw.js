@@ -1,6 +1,6 @@
 /* CANTINA DA ESCOLA — SERVICE WORKER */
 const CACHE_PREFIX = 'cantina-da-escola-shell-';
-const CACHE_NAME = CACHE_PREFIX + 'v14';
+const CACHE_NAME = CACHE_PREFIX + 'v15';
 
 const SHELL_FILES = [
   './',
